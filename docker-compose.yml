@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  multi-agent-app:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # Azure OpenAI Configuration
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY}
+      - AZURE_OPENAI_DEPLOYMENT_NAME=${AZURE_OPENAI_DEPLOYMENT_NAME}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION}
+      
+      # Azure Resource Management
+      - AZURE_SUBSCRIPTION_ID=${AZURE_SUBSCRIPTION_ID}
+      - AZURE_TENANT_ID=${AZURE_TENANT_ID}
+      - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
+      - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
+      
+      # Weather API Configuration
+      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+      
+      # Environmental API Configuration
+      - ENVIRONMENTAL_API_KEY=${ENVIRONMENTAL_API_KEY}
+      - ENVIRONMENTAL_API_ENDPOINT=${ENVIRONMENTAL_API_ENDPOINT}
+      
+      # Application Settings
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - APP_PORT=${APP_PORT:-8000}
+    volumes:
+      - ./src:/app/src
+      - ./examples:/app/examples
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
