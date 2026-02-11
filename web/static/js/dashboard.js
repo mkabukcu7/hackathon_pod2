@@ -139,8 +139,8 @@ function getMockCustomer(customerId) {
             status: 'Active',
             join_date: '2020-03-15',
             policies: [
-                { policy_number: 'AUTO-2020-001', type: 'Auto Insurance', premium: 1250, status: 'Active' },
-                { policy_number: 'HOME-2021-045', type: 'Home Insurance', premium: 1800, status: 'Active' }
+                { policy_number: 'AUTO-2020-001', type: 'Auto Insurance', premium: 1250, status: 'Active', coverage: 'Standard' },
+                { policy_number: 'HOME-2021-045', type: 'Home Insurance', premium: 1800, status: 'Active', coverage: 'Premium' }
             ],
             lifetime_value: 45000,
             satisfaction_score: 4.5,
@@ -155,7 +155,7 @@ function getMockCustomer(customerId) {
             status: 'Active',
             join_date: '2022-08-10',
             policies: [
-                { policy_number: 'AUTO-2022-089', type: 'Auto Insurance', premium: 980, status: 'Active' }
+                { policy_number: 'AUTO-2022-089', type: 'Auto Insurance', premium: 980, status: 'Active', coverage: 'Standard' }
             ],
             lifetime_value: 8500,
             satisfaction_score: 4.2,
@@ -170,9 +170,9 @@ function getMockCustomer(customerId) {
             status: 'Active',
             join_date: '2019-01-20',
             policies: [
-                { policy_number: 'HOME-2019-012', type: 'Home Insurance', premium: 2200, status: 'Active' },
-                { policy_number: 'AUTO-2019-013', type: 'Auto Insurance', premium: 1400, status: 'Active' },
-                { policy_number: 'LIFE-2020-078', type: 'Life Insurance', premium: 3200, status: 'Active' }
+                { policy_number: 'HOME-2019-012', type: 'Home Insurance', premium: 2200, status: 'Active', coverage: 'Premium Plus' },
+                { policy_number: 'AUTO-2019-013', type: 'Auto Insurance', premium: 1400, status: 'Active', coverage: 'Comprehensive' },
+                { policy_number: 'LIFE-2020-078', type: 'Life Insurance', premium: 3200, status: 'Active', coverage: 'Term Life - 500K' }
             ],
             lifetime_value: 125000,
             satisfaction_score: 4.8,
@@ -391,13 +391,21 @@ function showInsights() {
     panel.classList.add('open');
 }
 
+// Helper function to calculate years since a date
+function calculateYearsSince(dateString) {
+    const MS_PER_YEAR = 1000 * 60 * 60 * 24 * 365;
+    const date = new Date(dateString);
+    const now = new Date();
+    return ((now - date) / MS_PER_YEAR).toFixed(1);
+}
+
 // Show talking points
 function showTalkingPoints() {
     const panel = document.getElementById('insightsPanel');
     document.getElementById('panelTitle').textContent = '💬 AI-Generated Talking Points';
     
     const customer = getMockCustomer(currentCustomer);
-    const years = ((new Date() - new Date(customer.join_date)) / (1000 * 60 * 60 * 24 * 365)).toFixed(1);
+    const years = calculateYearsSince(customer.join_date);
     
     let html = `
         <h3>Conversation Guide</h3>
@@ -451,7 +459,7 @@ function closePanel() {
 }
 
 // Show tab
-function showTab(tabName) {
+function showTab(tabName, event) {
     // Hide all tabs
     document.querySelectorAll('.tab-content').forEach(tab => {
         tab.classList.remove('active');
@@ -466,7 +474,9 @@ function showTab(tabName) {
     document.getElementById(tabName).classList.add('active');
     
     // Add active class to clicked button
-    event.target.classList.add('active');
+    if (event && event.target) {
+        event.target.classList.add('active');
+    }
     
     // Load recommendations tab if selected
     if (tabName === 'recommendations') {

@@ -118,7 +118,8 @@ class SalesIntelligenceAgent:
         recommendations = []
         
         for policy in customer_data.get("policies", []):
-            if policy["coverage"] == "Standard":
+            coverage = policy.get("coverage", "Standard")
+            if coverage == "Standard":
                 recommendations.append({
                     "policy_number": policy["policy_number"],
                     "policy_type": policy["type"],
@@ -140,7 +141,7 @@ class SalesIntelligenceAgent:
                         "Enhanced protection with lower out-of-pocket costs"
                     ]
                 })
-            elif policy["coverage"] == "Comprehensive" and policy["type"] == "Auto Insurance":
+            elif policy.get("coverage") == "Comprehensive" and policy["type"] == "Auto Insurance":
                 recommendations.append({
                     "policy_number": policy["policy_number"],
                     "policy_type": policy["type"],
@@ -223,22 +224,30 @@ class SalesIntelligenceAgent:
             
         # Check for upcoming renewals
         for policy in customer_data.get("policies", []):
-            renewal_date = datetime.fromisoformat(policy["renewal_date"])
-            days_to_renewal = (renewal_date - datetime.now()).days
-            
-            if 30 <= days_to_renewal <= 60:
-                offers.append({
-                    "type": "early_renewal_incentive",
-                    "priority": "Medium",
-                    "offer": f"Early renewal bonus for {policy['type']}",
-                    "discount": 5,
-                    "reasoning": f"Policy {policy['policy_number']} renews in {days_to_renewal} days",
-                    "talking_points": [
-                        f"Renew your {policy['type']} early and save 5%",
-                        "Lock in current rates before any market increases",
-                        "Simplified renewal process - done in minutes"
-                    ]
-                })
+            renewal_date_str = policy.get("renewal_date")
+            if not renewal_date_str:
+                continue  # Skip policies without renewal date
+                
+            try:
+                renewal_date = datetime.fromisoformat(renewal_date_str)
+                days_to_renewal = (renewal_date - datetime.now()).days
+                
+                if 30 <= days_to_renewal <= 60:
+                    offers.append({
+                        "type": "early_renewal_incentive",
+                        "priority": "Medium",
+                        "offer": f"Early renewal bonus for {policy['type']}",
+                        "discount": 5,
+                        "reasoning": f"Policy {policy['policy_number']} renews in {days_to_renewal} days",
+                        "talking_points": [
+                            f"Renew your {policy['type']} early and save 5%",
+                            "Lock in current rates before any market increases",
+                            "Simplified renewal process - done in minutes"
+                        ]
+                    })
+            except (ValueError, TypeError):
+                # Skip policies with invalid renewal dates
+                continue
                 
         return {
             "customer_id": customer_id,
@@ -274,10 +283,15 @@ class SalesIntelligenceAgent:
         }
         
         # Add relationship highlights
-        years_with_company = (datetime.now() - datetime.fromisoformat(customer_data.get("join_date"))).days / 365
-        talking_points["relationship_highlights"].append(
-            f"You've been with us for {years_with_company:.1f} years - thank you for your loyalty!"
-        )
+        join_date_str = customer_data.get("join_date", datetime.now().isoformat())
+        try:
+            years_with_company = (datetime.now() - datetime.fromisoformat(join_date_str)).days / 365
+            talking_points["relationship_highlights"].append(
+                f"You've been with us for {years_with_company:.1f} years - thank you for your loyalty!"
+            )
+        except (ValueError, TypeError):
+            # Skip if join_date is invalid
+            pass
         
         if customer_data.get("type") == "Premium":
             talking_points["relationship_highlights"].append(

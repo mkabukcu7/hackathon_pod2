@@ -214,11 +214,16 @@ class RetentionInsightsAgent:
             factors.append({"factor": "Single policy", "impact": "-5", "value": policy_count})
             
         # Tenure impact
-        join_date = datetime.fromisoformat(customer_data.get("join_date"))
-        years = (datetime.now() - join_date).days / 365
-        if years >= 5:
-            score += 5
-            factors.append({"factor": "Long tenure", "impact": "+5", "value": f"{years:.1f} years"})
+        join_date_str = customer_data.get("join_date", datetime.now().isoformat())
+        try:
+            join_date = datetime.fromisoformat(join_date_str)
+            years = (datetime.now() - join_date).days / 365
+            if years >= 5:
+                score += 5
+                factors.append({"factor": "Long tenure", "impact": "+5", "value": f"{years:.1f} years"})
+        except (ValueError, TypeError):
+            # Skip if join_date is invalid
+            pass
             
         # Claims impact
         claim_count = len(customer_data.get("claim_history", []))
@@ -227,11 +232,16 @@ class RetentionInsightsAgent:
             factors.append({"factor": "Multiple claims", "impact": "-8", "value": claim_count})
             
         # Contact recency impact
-        last_contact = datetime.fromisoformat(customer_data.get("last_contact"))
-        days_since = (datetime.now() - last_contact).days
-        if days_since > 180:
-            score -= 10
-            factors.append({"factor": "No recent contact", "impact": "-10", "value": f"{days_since} days"})
+        last_contact_str = customer_data.get("last_contact", datetime.now().isoformat())
+        try:
+            last_contact = datetime.fromisoformat(last_contact_str)
+            days_since = (datetime.now() - last_contact).days
+            if days_since > 180:
+                score -= 10
+                factors.append({"factor": "No recent contact", "impact": "-10", "value": f"{days_since} days"})
+        except (ValueError, TypeError):
+            # Skip if last_contact is invalid
+            pass
             
         # Normalize score
         score = max(0, min(100, score))
