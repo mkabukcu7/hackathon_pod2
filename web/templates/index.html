@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Insurance Agent Dashboard - Multi-Agent System</title>
+    <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🎯 Insurance Agent Dashboard</h1>
+            <p class="subtitle">AI-Powered Customer Intelligence & Sales Assistant</p>
+        </header>
+
+        <!-- Quick Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-icon">👥</div>
+                <div class="stat-value" id="totalCustomers">-</div>
+                <div class="stat-label">Total Customers</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">📊</div>
+                <div class="stat-value" id="activeOpportunities">-</div>
+                <div class="stat-label">Active Opportunities</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">💡</div>
+                <div class="stat-value" id="aiInsights">-</div>
+                <div class="stat-label">AI Insights Today</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon">🎯</div>
+                <div class="stat-value" id="retentionScore">-</div>
+                <div class="stat-label">Avg Retention Score</div>
+            </div>
+        </div>
+
+        <!-- Customer Search -->
+        <div class="search-section">
+            <h2>🔍 Rapid Customer Lookup</h2>
+            <div class="search-container">
+                <input 
+                    type="text" 
+                    id="customerSearch" 
+                    placeholder="Search by name, email, phone, or customer ID..." 
+                    class="search-input"
+                >
+                <button onclick="searchCustomer()" class="btn btn-primary">Search</button>
+            </div>
+            <div id="searchResults" class="search-results"></div>
+        </div>
+
+        <!-- Customer Profile View -->
+        <div id="customerProfile" class="customer-profile" style="display: none;">
+            <div class="profile-header">
+                <h2 id="customerName">-</h2>
+                <span id="customerType" class="badge">-</span>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="quick-actions">
+                <button onclick="showCrossSell()" class="btn btn-success">
+                    💰 Cross-Sell Opportunities
+                </button>
+                <button onclick="showUpSell()" class="btn btn-info">
+                    📈 Up-Sell Options
+                </button>
+                <button onclick="showInsights()" class="btn btn-warning">
+                    💡 Customer Insights
+                </button>
+                <button onclick="showTalkingPoints()" class="btn btn-secondary">
+                    💬 Talking Points
+                </button>
+            </div>
+
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab-btn active" onclick="showTab('overview', event)">Overview</button>
+                <button class="tab-btn" onclick="showTab('policies', event)">Policies</button>
+                <button class="tab-btn" onclick="showTab('recommendations', event)">Recommendations</button>
+                <button class="tab-btn" onclick="showTab('insights', event)">Insights & Trends</button>
+            </div>
+
+            <!-- Tab Content -->
+            <div id="overview" class="tab-content active">
+                <div class="info-grid">
+                    <div class="info-card">
+                        <h3>Customer Information</h3>
+                        <div id="customerInfo">Loading...</div>
+                    </div>
+                    <div class="info-card">
+                        <h3>Recent Activity</h3>
+                        <div id="recentActivity">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="policies" class="tab-content">
+                <div id="policiesList">Loading...</div>
+            </div>
+
+            <div id="recommendations" class="tab-content">
+                <div id="recommendationsList">Loading...</div>
+            </div>
+
+            <div id="insights" class="tab-content">
+                <div id="insightsList">Loading...</div>
+            </div>
+        </div>
+
+        <!-- Insights Panel (Slides in from right) -->
+        <div id="insightsPanel" class="side-panel">
+            <div class="panel-header">
+                <h3 id="panelTitle">AI Insights</h3>
+                <button onclick="closePanel()" class="close-btn">&times;</button>
+            </div>
+            <div id="panelContent" class="panel-content">
+                <!-- Dynamic content loaded here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>
