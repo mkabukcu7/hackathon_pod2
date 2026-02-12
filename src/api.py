@@ -18,7 +18,7 @@ load_dotenv()
 sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
 from orchestrator import AgentOrchestrator
-from agents import WeatherAgent, EnvironmentalAgent, AzureAgent, CustomerProfileAgent, SalesIntelligenceAgent, RetentionInsightsAgent
+from agents import WeatherAgent, EnvironmentalAgent, AzureAgent, CustomerProfileAgent, SalesIntelligenceAgent, RetentionInsightsAgent, HazardRiskAgent
 
 
 # Pydantic models for request/response
@@ -50,6 +50,7 @@ orchestrator = AgentOrchestrator()
 customer_agent = CustomerProfileAgent(use_cosmos_db=True)
 sales_agent = SalesIntelligenceAgent()
 retention_agent = RetentionInsightsAgent()
+hazard_agent = HazardRiskAgent()
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -446,6 +447,67 @@ async def get_security_recommendations(
         azure_agent = AzureAgent()
         result = azure_agent.get_security_recommendations(resource_group)
         return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# Hazard Risk Endpoints
+@app.get("/api/risk/flood")
+async def get_flood_risk(
+    zip: str = Query(..., description="5-digit ZIP code", regex="^\\d{5}$")
+):
+    """Get flood risk assessment for a ZIP code
+    
+    Uses OpenFEMA NFIP claims and disaster declarations to compute
+    a risk score based on 10-year historical data.
+    """
+    try:
+        result = hazard_agent.get_flood_risk(zip)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/risk/wildfire")
+async def get_wildfire_risk(
+    zip: str = Query(..., description="5-digit ZIP code", regex="^\\d{5}$")
+):
+    """Get wildfire risk assessment for a ZIP code
+    
+    Uses OpenFEMA disaster declarations and public assistance data
+    to compute a risk score based on 10-year historical data.
+    """
+    try:
+        result = hazard_agent.get_wildfire_risk(zip)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/risk/earthquake")
+async def get_earthquake_risk(
+    zip: str = Query(..., description="5-digit ZIP code", regex="^\\d{5}$")
+):
+    """Get earthquake risk assessment for a ZIP code
+    
+    Uses OpenFEMA disaster declarations and public assistance data
+    to compute a risk score based on 10-year historical data.
+    """
+    try:
+        result = hazard_agent.get_earthquake_risk(zip)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
