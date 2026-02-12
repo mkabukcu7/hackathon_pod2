@@ -135,6 +135,7 @@ function getMockCustomer(customerId) {
             name: 'Sarah Johnson',
             email: 'sarah.johnson@email.com',
             phone: '+1-555-0101',
+            zip: '90001',
             type: 'Premium',
             status: 'Active',
             join_date: '2020-03-15',
@@ -151,6 +152,7 @@ function getMockCustomer(customerId) {
             name: 'Michael Chen',
             email: 'm.chen@techcorp.com',
             phone: '+1-555-0202',
+            zip: '33101',
             type: 'Standard',
             status: 'Active',
             join_date: '2022-08-10',
@@ -166,6 +168,7 @@ function getMockCustomer(customerId) {
             name: 'Jennifer Martinez',
             email: 'jmartinez@consulting.com',
             phone: '+1-555-0303',
+            zip: '94102',
             type: 'Premium',
             status: 'Active',
             join_date: '2019-01-20',
@@ -189,6 +192,7 @@ function loadOverviewTab(customer) {
         <p><strong>Customer ID:</strong> ${customer.id}</p>
         <p><strong>Email:</strong> ${customer.email}</p>
         <p><strong>Phone:</strong> ${customer.phone}</p>
+        <p><strong>ZIP Code:</strong> ${customer.zip || 'N/A'}</p>
         <p><strong>Status:</strong> ${customer.status}</p>
         <p><strong>Member Since:</strong> ${customer.join_date}</p>
         <p><strong>Lifetime Value:</strong> $${customer.lifetime_value.toLocaleString()}</p>
@@ -197,6 +201,11 @@ function loadOverviewTab(customer) {
     `;
     
     document.getElementById('customerInfo').innerHTML = infoHtml;
+    
+    // Load hazard risk if ZIP is available
+    if (customer.zip) {
+        loadHazardRisk(customer.zip);
+    }
     
     const activityHtml = `
         <div class="insight-card">
@@ -532,4 +541,85 @@ function loadInsightsTab() {
     </div>`;
     
     document.getElementById('insightsList').innerHTML = html;
+}
+
+// Load hazard risk data for a ZIP code
+async function loadHazardRisk(zipCode) {
+    const hazardSection = document.getElementById('hazardRiskSection');
+    hazardSection.style.display = 'block';
+    
+    // Load all three hazard types in parallel
+    try {
+        const [floodData, wildfireData, earthquakeData] = await Promise.all([
+            fetchHazardRisk('flood', zipCode),
+            fetchHazardRisk('wildfire', zipCode),
+            fetchHazardRisk('earthquake', zipCode)
+        ]);
+        
+        displayHazardRisk('flood', floodData);
+        displayHazardRisk('wildfire', wildfireData);
+        displayHazardRisk('earthquake', earthquakeData);
+    } catch (error) {
+        console.error('Error loading hazard risk:', error);
+        hazardSection.style.display = 'none';
+    }
+}
+
+// Fetch hazard risk data from API
+async function fetchHazardRisk(hazardType, zipCode) {
+    try {
+        const response = await fetch(`${API_BASE}/api/risk/${hazardType}?zip=${zipCode}`);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        return await response.json();
+    } catch (error) {
+        console.error(`Error fetching ${hazardType} risk:`, error);
+        // Return mock data for demo
+        return {
+            hazard_type: hazardType,
+            zip: zipCode,
+            risk_score: 0,
+            band: 'Unknown',
+            drivers: ['Data unavailable - API not responding'],
+            error: error.message
+        };
+    }
+}
+
+// Display hazard risk data in the card
+function displayHazardRisk(hazardType, data) {
+    const scoreElem = document.getElementById(`${hazardType}Score`);
+    const bandElem = document.getElementById(`${hazardType}Band`);
+    const driversElem = document.getElementById(`${hazardType}Drivers`);
+    
+    if (!data || data.error) {
+        scoreElem.textContent = '--';
+        bandElem.textContent = 'Data Unavailable';
+        bandElem.className = 'risk-band';
+        driversElem.innerHTML = '<small>Unable to load risk data</small>';
+        return;
+    }
+    
+    // Display score
+    scoreElem.textContent = data.risk_score.toFixed(0);
+    
+    // Display band with appropriate styling
+    bandElem.textContent = data.band;
+    bandElem.className = `risk-band ${data.band.toLowerCase()}`;
+    
+    // Display drivers
+    if (data.drivers && data.drivers.length > 0) {
+        const driversHtml = `
+            <strong style="display: block; margin-bottom: 8px;">Key Factors:</strong>
+            <ul style="margin: 0; padding-left: 0;">
+                ${data.drivers.map(driver => `<li>${driver}</li>`).join('')}
+            </ul>
+        `;
+        driversElem.innerHTML = driversHtml;
+    } else {
+        driversElem.innerHTML = '<small>No significant risk factors identified</small>';
+    }
 }
