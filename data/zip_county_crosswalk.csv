@@ -1,0 +1,61 @@
+zip,county,state,state_abbr
+10001,New York,New York,NY
+10002,New York,New York,NY
+10003,New York,New York,NY
+10004,New York,New York,NY
+10005,New York,New York,NY
+90001,Los Angeles,California,CA
+90002,Los Angeles,California,CA
+90003,Los Angeles,California,CA
+90004,Los Angeles,California,CA
+90005,Los Angeles,California,CA
+60601,Cook,Illinois,IL
+60602,Cook,Illinois,IL
+60603,Cook,Illinois,IL
+60604,Cook,Illinois,IL
+60605,Cook,Illinois,IL
+94102,San Francisco,California,CA
+94103,San Francisco,California,CA
+94104,San Francisco,California,CA
+94105,San Francisco,California,CA
+94106,San Francisco,California,CA
+77001,Harris,Texas,TX
+77002,Harris,Texas,TX
+77003,Harris,Texas,TX
+77004,Harris,Texas,TX
+77005,Harris,Texas,TX
+33101,Miami-Dade,Florida,FL
+33102,Miami-Dade,Florida,FL
+33125,Miami-Dade,Florida,FL
+33126,Miami-Dade,Florida,FL
+33127,Miami-Dade,Florida,FL
+98101,King,Washington,WA
+98102,King,Washington,WA
+98103,King,Washington,WA
+98104,King,Washington,WA
+98105,King,Washington,WA
+02101,Suffolk,Massachusetts,MA
+02102,Suffolk,Massachusetts,MA
+02103,Suffolk,Massachusetts,MA
+02104,Suffolk,Massachusetts,MA
+02105,Suffolk,Massachusetts,MA
+19101,Philadelphia,Pennsylvania,PA
+19102,Philadelphia,Pennsylvania,PA
+19103,Philadelphia,Pennsylvania,PA
+19104,Philadelphia,Pennsylvania,PA
+19105,Philadelphia,Pennsylvania,PA
+85001,Maricopa,Arizona,AZ
+85002,Maricopa,Arizona,AZ
+85003,Maricopa,Arizona,AZ
+85004,Maricopa,Arizona,AZ
+85005,Maricopa,Arizona,AZ
+30301,Fulton,Georgia,GA
+30302,Fulton,Georgia,GA
+30303,Fulton,Georgia,GA
+30304,Fulton,Georgia,GA
+30305,Fulton,Georgia,GA
+80201,Denver,Colorado,CO
+80202,Denver,Colorado,CO
+80203,Denver,Colorado,CO
+80204,Denver,Colorado,CO
+80205,Denver,Colorado,CO

@@ -341,12 +341,162 @@ curl "http://localhost:8000/api/azure/security?resource_group=my-rg"
 }
 ```
 
+### Hazard Risk Endpoints
+
+#### GET /api/risk/flood
+Get flood risk assessment for a ZIP code
+
+**Parameters:**
+- `zip` (required): 5-digit ZIP code
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/risk/flood?zip=90001"
+```
+
+**Response:**
+```json
+{
+  "hazard_type": "flood",
+  "zip": "90001",
+  "county": "Los Angeles",
+  "state": "California",
+  "state_abbr": "CA",
+  "window_years": 10,
+  "start_date": "2016-02-12",
+  "end_date": "2026-02-12",
+  "frequency": {
+    "disaster_count": 2,
+    "score": 20.0,
+    "source": "Disaster Declarations"
+  },
+  "financial": {
+    "total_amount": 500000,
+    "claim_count": 10,
+    "score": 2.5,
+    "source": "NFIP Claims"
+  },
+  "risk_score": 22.5,
+  "band": "Low",
+  "drivers": [
+    "2 disaster declaration(s) in past 10 years",
+    "$500,000 in total claims/assistance"
+  ],
+  "sources": [
+    "OpenFEMA DisasterDeclarationsSummaries",
+    "OpenFEMA FimaNfipClaims"
+  ]
+}
+```
+
+#### GET /api/risk/wildfire
+Get wildfire risk assessment for a ZIP code
+
+**Parameters:**
+- `zip` (required): 5-digit ZIP code
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/risk/wildfire?zip=94102"
+```
+
+**Response:**
+```json
+{
+  "hazard_type": "wildfire",
+  "zip": "94102",
+  "county": "San Francisco",
+  "state": "California",
+  "state_abbr": "CA",
+  "window_years": 10,
+  "start_date": "2016-02-12",
+  "end_date": "2026-02-12",
+  "frequency": {
+    "disaster_count": 1,
+    "score": 10.0,
+    "source": "Disaster Declarations"
+  },
+  "financial": {
+    "total_amount": 2000000,
+    "claim_count": 5,
+    "score": 10.0,
+    "source": "Public Assistance"
+  },
+  "risk_score": 20.0,
+  "band": "Low",
+  "drivers": [
+    "1 disaster declaration(s) in past 10 years",
+    "$2,000,000 in total claims/assistance"
+  ],
+  "sources": [
+    "OpenFEMA DisasterDeclarationsSummaries",
+    "OpenFEMA PublicAssistanceFundedProjectsDetails"
+  ]
+}
+```
+
+#### GET /api/risk/earthquake
+Get earthquake risk assessment for a ZIP code
+
+**Parameters:**
+- `zip` (required): 5-digit ZIP code
+
+**Example:**
+```bash
+curl "http://localhost:8000/api/risk/earthquake?zip=94102"
+```
+
+**Response:**
+```json
+{
+  "hazard_type": "earthquake",
+  "zip": "94102",
+  "county": "San Francisco",
+  "state": "California",
+  "state_abbr": "CA",
+  "window_years": 10,
+  "start_date": "2016-02-12",
+  "end_date": "2026-02-12",
+  "frequency": {
+    "disaster_count": 0,
+    "score": 0.0,
+    "source": "Disaster Declarations"
+  },
+  "financial": {
+    "total_amount": 0,
+    "claim_count": 0,
+    "score": 0.0,
+    "source": "Public Assistance"
+  },
+  "risk_score": 0.0,
+  "band": "Low",
+  "drivers": [
+    "No significant historical incidents"
+  ],
+  "sources": [
+    "OpenFEMA DisasterDeclarationsSummaries",
+    "OpenFEMA PublicAssistanceFundedProjectsDetails"
+  ]
+}
+```
+
+**Risk Score Interpretation:**
+- **Score Range**: 0-100
+- **Bands**:
+  - Low: 0-25
+  - Moderate: 25-50
+  - High: 50-75
+  - Severe: 75-100
+- **Calculation**: 50% frequency (disaster declarations) + 50% financial impact (claims/assistance)
+- **Data Window**: Last 10 years of historical data
+
 ## Error Handling
 
 All endpoints return standard HTTP status codes:
 
 - `200`: Success
 - `400`: Bad Request (invalid parameters)
+- `404`: Not Found (ZIP code not in crosswalk)
 - `500`: Internal Server Error
 
 Error responses include details:
@@ -363,8 +513,15 @@ Rate limiting depends on the external APIs being used:
 
 - **OpenWeatherMap**: Free tier allows 60 calls/minute
 - **Azure APIs**: Varies by service
+- **OpenFEMA**: No specific rate limits, but use caching to minimize requests
 
-## Examples
+## Notes
+
+- Some features return mock data when external APIs are not configured
+- Ensure your `.env` file is properly configured for full functionality
+- The API server can be run with: `python src/api.py`
+- Default port is 8000, configurable via `APP_PORT` environment variable
+- Hazard risk data is cached for 24 hours to improve performance
 
 ### Python Example
 

@@ -16,6 +16,7 @@ This multi-agent application is inspired by the TechWorkshop-L300-AI-Apps-and-ag
 - 🌤️ **Weather Data**: Current conditions, forecasts, and air quality from OpenWeatherMap
 - 🌍 **Environmental Monitoring**: Pollution, climate trends, ecosystem health, and water quality
 - ☁️ **Azure Integration**: Resource management, cost tracking, and security insights
+- 🌊 **Hazard Risk Assessment**: Flood, wildfire, and earthquake risk scoring using OpenFEMA data
 - 🤖 **Multi-Agent Orchestration**: Natural language query processing with intelligent agent routing
 - 🌐 **REST API**: FastAPI-based web service with comprehensive endpoints
 - 💻 **CLI Interface**: Interactive command-line interface for easy access
@@ -167,6 +168,33 @@ python examples.py
 - `get_cost_analysis(resource_group, time_period)` - Cost analysis
 - `get_service_health()` - Azure service health status
 - `get_security_recommendations(resource_group)` - Security recommendations
+
+### Hazard Risk Agent
+- `get_flood_risk(zip_code)` - Flood risk assessment using OpenFEMA NFIP claims and disaster declarations
+- `get_wildfire_risk(zip_code)` - Wildfire risk assessment using OpenFEMA disaster data and public assistance
+- `get_earthquake_risk(zip_code)` - Earthquake risk assessment using OpenFEMA disaster data and public assistance
+
+#### Hazard Risk Scoring
+The Hazard Risk Agent computes risk scores (0-100) based on:
+- **10-year historical window**: Analyzes data from the past decade
+- **50/50 frequency + financial blend**: 
+  - Frequency score: Number of disaster declarations
+  - Financial score: Total claims/assistance amounts
+- **Risk Bands**: Low (0-25), Moderate (25-50), High (50-75), Severe (75-100)
+- **County-level aggregation**: Uses ZIP-to-county crosswalk for accurate geographic mapping
+- **Caching**: Results cached for 24 hours to optimize performance
+
+**Data Sources:**
+- OpenFEMA DisasterDeclarationsSummaries
+- OpenFEMA FimaNfipClaims (for flood)
+- OpenFEMA PublicAssistanceFundedProjectsDetails (for wildfire/earthquake)
+
+**Example API usage:**
+```bash
+curl "http://localhost:8000/api/risk/flood?zip=90001"
+curl "http://localhost:8000/api/risk/wildfire?zip=94102"
+curl "http://localhost:8000/api/risk/earthquake?zip=94102"
+```
 
 ## Development
 
