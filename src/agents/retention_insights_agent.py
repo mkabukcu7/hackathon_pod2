@@ -4,14 +4,63 @@ Retention Insights Agent - Provides customer trends and retention analytics
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import random
+import sys
+import os
+import pandas as pd
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from utils.parquet_loader import (
+    get_customers,
+    get_policies,
+    get_claims,
+    get_customer_features
+)
 
 
 class RetentionInsightsAgent:
-    """Agent for customer retention insights and trend analysis"""
+    """Agent for customer retention insights and trend analysis from Parquet data"""
     
-    def __init__(self):
-        """Initialize the Retention Insights Agent"""
-        pass
+    def __init__(self, use_parquet: bool = True):
+        """Initialize the Retention Insights Agent
+        
+        Args:
+            use_parquet: Whether to use Parquet data (True) or mock data (False)
+        """
+        self.use_parquet = use_parquet
+        self.parquet_data = None
+        
+        # Try to load Parquet data
+        if use_parquet:
+            try:
+                self.parquet_data = self._load_parquet_data()
+                if self.parquet_data:
+                    print("Retention Insights Agent loaded Parquet data")
+                else:
+                    print("Parquet data not available")
+                    self.use_parquet = False
+            except Exception as e:
+                print(f"Failed to load Parquet data: {e}")
+                self.use_parquet = False
+    
+    def _load_parquet_data(self) -> Optional[Dict[str, Any]]:
+        """Load retention-relevant data from Parquet files"""
+        try:
+            customers_df = get_customers()
+            policies_df = get_policies()
+            claims_df = get_claims()
+            features_df = get_customer_features()
+            
+            return {
+                'customers_df': customers_df,
+                'policies_df': policies_df,
+                'claims_df': claims_df,
+                'features_df': features_df
+            }
+        except Exception as e:
+            print(f"Error loading Parquet data: {e}")
+            return None
         
     def get_customer_insights(
         self,

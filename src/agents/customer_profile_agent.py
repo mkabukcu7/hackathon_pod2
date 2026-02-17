@@ -1,16 +1,23 @@
 """
-Customer Profile Agent - Manages customer data and rapid lookup with Cosmos DB integration
+Customer Profile Agent - Manages customer data and rapid lookup with Parquet, Cosmos DB integration
 """
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta
 import random
 import sys
 import os
+import pandas as pd
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from services.cosmos_db_service import CosmosDBService
+from utils.parquet_loader import (
+    get_customers,
+    get_policies,
+    get_claims,
+    get_customer_features
+)
 
 
 # Mock customer database
@@ -123,19 +130,37 @@ MOCK_CUSTOMERS = {
 
 
 class CustomerProfileAgent:
-    """Agent for customer profile management and lookup with Cosmos DB backend"""
+    """Agent for customer profile management and lookup with Parquet, Cosmos DB, or mock data backends"""
     
-    def __init__(self, use_cosmos_db: bool = True):
+    def __init__(self, use_parquet: bool = True, use_cosmos_db: bool = False):
         """Initialize the Customer Profile Agent
         
         Args:
+            use_parquet: Whether to use Parquet data (True) or mock data (False)
             use_cosmos_db: Whether to use Cosmos DB (True) or mock data (False)
         """
         self.customers = MOCK_CUSTOMERS
+        self.use_parquet = use_parquet
         self.use_cosmos_db = use_cosmos_db
         self.cosmos_service = None
+        self.parquet_data = None
         
-        if use_cosmos_db:
+        # Try to load Parquet data first
+        if use_parquet:
+            try:
+                self.parquet_data = self._load_parquet_data()
+                if self.parquet_data:
+                    print("Customer Profile Agent loaded Parquet data")
+                    self.use_parquet = True
+                else:
+                    print("Parquet data not available, trying Cosmos DB or mock data")
+                    self.use_parquet = False
+            except Exception as e:
+                print(f"Failed to load Parquet data: {e}, trying Cosmos DB or mock data")
+                self.use_parquet = False
+        
+        # Try Cosmos DB if Parquet is not available
+        if not self.use_parquet and use_cosmos_db:
             try:
                 self.cosmos_service = CosmosDBService()
                 if self.cosmos_service.is_connected():
@@ -146,6 +171,26 @@ class CustomerProfileAgent:
             except Exception as e:
                 print(f"Failed to connect to Cosmos DB: {e}, using mock data")
                 self.use_cosmos_db = False
+    
+    def _load_parquet_data(self) -> Optional[Dict[str, Any]]:
+        """Load customer data from Parquet files
+        
+        Returns:
+            Dictionary with parquet dataframes or None if not available
+        """
+        try:
+            customers_df = get_customers()
+            policies_df = get_policies()
+            claims_df = get_claims()
+            
+            return {
+                'customers_df': customers_df,
+                'policies_df': policies_df,
+                'claims_df': claims_df
+            }
+        except Exception as e:
+            print(f"Error loading Parquet data: {e}")
+            return None
         
     def search_customer(self, query: str) -> List[Dict[str, Any]]:
         """Search for customers by name, email, phone, or ID

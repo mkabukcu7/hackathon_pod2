@@ -48,7 +48,13 @@ htmlcov/
 .coverage
 .pytest_cache/
 
-# Temporary files
+# Data files - Users should provide their own or point to Azure Lakehouse
+# Do not commit data files to version control
+data/
+*.parquet
+*.csv
+!data/.gitkeep
+!data/README.md# Temporary files
 tmp/
 temp/
 *.tmp

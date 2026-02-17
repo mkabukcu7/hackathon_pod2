@@ -4,14 +4,61 @@ Sales Intelligence Agent - Provides cross-sell and up-sell recommendations
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
 import random
+import sys
+import os
+import pandas as pd
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from utils.parquet_loader import (
+    get_customers,
+    get_policies,
+    get_producer_activity
+)
 
 
 class SalesIntelligenceAgent:
-    """Agent for generating sales recommendations and insights"""
+    """Agent for generating sales recommendations and insights from Parquet data"""
     
-    def __init__(self):
-        """Initialize the Sales Intelligence Agent"""
+    def __init__(self, use_parquet: bool = True):
+        """Initialize the Sales Intelligence Agent
+        
+        Args:
+            use_parquet: Whether to use Parquet data (True) or mock data (False)
+        """
         self.product_catalog = self._load_product_catalog()
+        self.use_parquet = use_parquet
+        self.parquet_data = None
+        
+        # Try to load Parquet data
+        if use_parquet:
+            try:
+                self.parquet_data = self._load_parquet_data()
+                if self.parquet_data:
+                    print("Sales Intelligence Agent loaded Parquet data")
+                else:
+                    print("Parquet data not available")
+                    self.use_parquet = False
+            except Exception as e:
+                print(f"Failed to load Parquet data: {e}")
+                self.use_parquet = False
+    
+    def _load_parquet_data(self) -> Optional[Dict[str, Any]]:
+        """Load sales-relevant data from Parquet files"""
+        try:
+            customers_df = get_customers()
+            policies_df = get_policies()
+            activity_df = get_producer_activity()
+            
+            return {
+                'customers_df': customers_df,
+                'policies_df': policies_df,
+                'activity_df': activity_df
+            }
+        except Exception as e:
+            print(f"Error loading Parquet data: {e}")
+            return None
         
     def get_cross_sell_recommendations(
         self, 

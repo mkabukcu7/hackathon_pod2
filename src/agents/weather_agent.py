@@ -7,19 +7,38 @@ import requests
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import random
+import sys
+import pandas as pd
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from utils.parquet_loader import get_external_signals
 
 
 class WeatherAgent:
     """Agent for retrieving weather information and natural disaster risk assessment"""
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, use_parquet: bool = True):
         """Initialize the Weather Agent
         
         Args:
             api_key: OpenWeatherMap API key (optional, defaults to env variable)
+            use_parquet: Whether to use Parquet data for external signals (True) or mock data (False)
         """
         self.api_key = api_key or os.getenv("OPENWEATHER_API_KEY")
         self.base_url = "https://api.openweathermap.org/data/2.5"
+        self.use_parquet = use_parquet
+        self.external_signals_df = None
+        
+        # Try to load Parquet data
+        if use_parquet:
+            try:
+                self.external_signals_df = get_external_signals()
+                print("Weather Agent loaded Parquet external signals data")
+            except Exception as e:
+                print(f"Failed to load external signals Parquet data: {e}")
+                self.use_parquet = False
         
         # Insurance risk zones data (mock - would come from FEMA, USGS, etc.)
         self.risk_zones = self._load_risk_zones()

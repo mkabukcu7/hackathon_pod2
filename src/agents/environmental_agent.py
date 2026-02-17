@@ -5,20 +5,39 @@ import os
 import requests
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+import sys
+import pandas as pd
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from utils.parquet_loader import get_external_signals
 
 
 class EnvironmentalAgent:
     """Agent for retrieving environmental information"""
     
-    def __init__(self, api_key: Optional[str] = None, api_endpoint: Optional[str] = None):
+    def __init__(self, api_key: Optional[str] = None, api_endpoint: Optional[str] = None, use_parquet: bool = True):
         """Initialize the Environmental Agent
         
         Args:
             api_key: Environmental API key (optional, defaults to env variable)
             api_endpoint: API endpoint URL (optional, defaults to env variable)
+            use_parquet: Whether to use Parquet data for external signals (True) or mock data (False)
         """
         self.api_key = api_key or os.getenv("ENVIRONMENTAL_API_KEY")
         self.api_endpoint = api_endpoint or os.getenv("ENVIRONMENTAL_API_ENDPOINT")
+        self.use_parquet = use_parquet
+        self.external_signals_df = None
+        
+        # Try to load Parquet data
+        if use_parquet:
+            try:
+                self.external_signals_df = get_external_signals()
+                print("Environmental Agent loaded Parquet external signals data")
+            except Exception as e:
+                print(f"Failed to load external signals Parquet data: {e}")
+                self.use_parquet = False
         
     def get_pollution_data(self, location: str) -> Dict[str, Any]:
         """Get pollution data for a location
