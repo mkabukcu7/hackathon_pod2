@@ -395,7 +395,6 @@ class WeatherAgent:
                 "location": location,
                 "source": "OpenFEMA Disaster Declarations"
             }
-        }
         
     def get_earthquake_risk_assessment(self, location: str, lat: float, lon: float) -> Dict[str, Any]:
         """Get earthquake risk assessment for a location using FEMA disaster data
