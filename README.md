@@ -204,6 +204,54 @@ curl "http://localhost:8000/api/risk/earthquake?zip=94102"
 curl "http://localhost:8000/api/weather/flood-risk?location=Los%20Angeles,%20CA"
 ```
 
+## Azure Setup
+
+### Quick Setup with Automation Scripts
+
+The fastest way to set up all Azure resources:
+
+#### Windows (PowerShell):
+```powershell
+.\setup-resources.ps1
+```
+
+#### Linux/Mac (Bash):
+```bash
+chmod +x setup-resources.sh
+./setup-resources.sh
+```
+
+These scripts will automatically create:
+- ✅ Azure Maps (S0) - Weather and environmental data
+- ✅ Azure OpenAI - Agent orchestration
+- ✅ Service Principal - Azure resource management
+- ✅ Key Vault - Secure credential storage
+- ✅ `.env.generated` file with all credentials
+
+### Manual Setup
+
+For step-by-step instructions, see [AZURE_SETUP.md](./AZURE_SETUP.md)
+
+## Documentation
+
+### Getting Started
+- **[INDEX.md](./INDEX.md)** - Complete documentation index and quick navigation
+- **[DEMO_GUIDE.md](./DEMO_GUIDE.md)** - Guided walkthrough of features
+- **[API_DOCUMENTATION.md](./API_DOCUMENTATION.md)** - REST API endpoint reference
+
+### Integration & Setup
+- **[AZURE_SETUP.md](./AZURE_SETUP.md)** - Azure resource provisioning guide
+- **[PARQUET_INTEGRATION.md](./PARQUET_INTEGRATION.md)** - Parquet data integration guide
+- **[AGENTS_UPDATE_SUMMARY.md](./AGENTS_UPDATE_SUMMARY.md)** - Agent implementation details
+
+### Verification & Testing
+- **[FINAL_VERIFICATION.md](./FINAL_VERIFICATION.md)** - Complete verification report
+- **[TASK_VERIFICATION_REPORT.md](./TASK_VERIFICATION_REPORT.md)** - Detailed test results
+- **[IMPLEMENTATION_CHECKLIST.md](./IMPLEMENTATION_CHECKLIST.md)** - Implementation details
+
+### Security & Compliance
+- **[SECURITY.md](./SECURITY.md)** - Security guidelines and best practices
+
 ## Development
 
 ### Project Structure
@@ -214,6 +262,7 @@ The application follows the TechWorkshop-L300-AI-Apps-and-agents pattern with:
 - Extensible design for adding new agents
 - RESTful API design
 - Comprehensive error handling
+- Parquet data integration with automatic fallback
 
 ### Adding New Agents
 
@@ -221,18 +270,27 @@ To add a new agent:
 
 1. Create a new agent class in `src/agents/`
 2. Implement required methods following the existing pattern
-3. Add the agent to `src/agents/__init__.py`
-4. Update the orchestrator in `src/orchestrator.py`
-5. Add API endpoints in `src/api.py` if needed
+3. Add Parquet data support using `utils/parquet_loader.py`
+4. Add the agent to `src/agents/__init__.py`
+5. Update the orchestrator in `src/orchestrator.py`
+6. Add API endpoints in `src/api.py` if needed
+
+See [AGENTS_UPDATE_SUMMARY.md](./AGENTS_UPDATE_SUMMARY.md) for detailed implementation patterns.
 
 ## Testing
 
-The application includes example scripts for testing:
+The application includes comprehensive example scripts:
 
 ```bash
+# Verify all agents work with Parquet data (6/6 tests)
+python examples/verify_agent_tasks.py
+
+# Run all examples
 cd examples
 python examples.py
 ```
+
+See [PARQUET_INTEGRATION.md](./PARQUET_INTEGRATION.md) for more examples.
 
 ## Troubleshooting
 
@@ -240,16 +298,31 @@ python examples.py
 - Ensure `.env` file is configured with valid API keys
 - Check that environment variables are loaded correctly
 - Verify API key permissions and quotas
+- See [AZURE_SETUP.md](./AZURE_SETUP.md#troubleshooting) for Azure-specific issues
 
 ### Import Errors
 - Ensure you're running from the correct directory
 - Verify virtual environment is activated
 - Check that all dependencies are installed
+- Verify Parquet files are in `data/` directory
 
 ### Azure Authentication
 - Verify Azure credentials are correctly configured
 - Ensure service principal has required permissions
 - Check Azure subscription is active
+- See [SECURITY.md](./SECURITY.md) for security guidelines
+
+### Parquet Data Issues
+- Verify `data/` directory exists with `.parquet` files
+- Check that `pyarrow` is installed: `pip install pyarrow`
+- Run verification: `python examples/verify_agent_tasks.py`
+- See [PARQUET_INTEGRATION.md](./PARQUET_INTEGRATION.md#troubleshooting) for details
+
+### OpenAI Model Deployment
+- Ensure model is deployed in Azure OpenAI
+- Check deployment name matches `AZURE_OPENAI_DEPLOYMENT_NAME`
+- Verify API version is supported: `2024-02-15-preview`
+- See [AZURE_SETUP.md](./AZURE_SETUP.md#troubleshooting) for fixes
 
 ## License
 
