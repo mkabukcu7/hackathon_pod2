@@ -1,12 +1,12 @@
 """
 Weather and Natural Disaster Risk Agent - Retrieves weather data and assesses 
 insurance-relevant natural disaster risks (floods, wildfires, earthquakes)
-Uses Azure Maps API for weather and environmental data
+Uses Azure Maps API for weather and OpenFEMA API for disaster data
 """
 import os
 import httpx
-from typing import Dict, Any, Optional, List
-from datetime import datetime
+from typing import Dict, Any, Optional, List, Tuple
+from datetime import datetime, timedelta
 import random
 import sys
 import pandas as pd
@@ -15,14 +15,25 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from utils.parquet_loader import get_external_signals
+from utils.zip_crosswalk import get_county_for_zip
 
 
 class WeatherAgent:
-    """Agent for retrieving weather information using Azure Maps and natural disaster risk assessment"""
+    """Agent for retrieving weather information using Azure Maps and natural disaster risk assessment using OpenFEMA"""
     
     # Azure Maps API endpoints
     AZURE_MAPS_WEATHER_BASE = "https://atlas.microsoft.com/weather"
     AZURE_MAPS_SEARCH_BASE = "https://atlas.microsoft.com/search"
+    
+    # OpenFEMA API endpoints
+    OPENFEMA_BASE = "https://www.fema.gov/api/open/v2"
+    
+    # Hazard type mappings for disaster declarations
+    HAZARD_TYPES = {
+        "flood": ["Flood", "Severe Storm(s)", "Hurricane", "Coastal Storm"],
+        "wildfire": ["Fire"],
+        "earthquake": ["Earthquake"]
+    }
     
     def __init__(self, api_key: Optional[str] = None, use_parquet: bool = True):
         """Initialize the Weather Agent
@@ -35,6 +46,7 @@ class WeatherAgent:
         self.use_parquet = use_parquet
         self.external_signals_df = None
         self.client = httpx.Client(timeout=30)
+        self.window_years = 10  # Historical window for FEMA data
         
         # Try to load Parquet data
         if use_parquet:
@@ -247,7 +259,7 @@ class WeatherAgent:
             return {"error": f"Failed to fetch air quality data: {str(e)}", "source": "Azure Maps Air Quality API"}
             
     def get_flood_risk_assessment(self, location: str, lat: float, lon: float) -> Dict[str, Any]:
-        """Get flood risk assessment for a location (insurance underwriting)
+        """Get flood risk assessment for a location using FEMA disaster data
         
         Args:
             location: Location name
@@ -255,45 +267,67 @@ class WeatherAgent:
             lon: Longitude
             
         Returns:
-            Dictionary containing flood risk data
+            Dictionary containing flood risk data based on actual FEMA disasters
         """
-        # Mock implementation - would integrate with FEMA Flood Maps, NOAA, etc.
-        zone_data = self.risk_zones.get(location, {})
-        
-        # Simulate flood zone determination
-        flood_zones = ["X", "A", "AE", "V", "VE"]  # FEMA flood zones
-        flood_zone = zone_data.get("flood_zone", random.choice(flood_zones))
-        
-        risk_levels = {
-            "X": {"level": "Low", "description": "Minimal flood risk", "premium_factor": 1.0},
-            "A": {"level": "High", "description": "High flood risk area", "premium_factor": 2.5},
-            "AE": {"level": "High", "description": "Special Flood Hazard Area", "premium_factor": 2.8},
-            "V": {"level": "Very High", "description": "Coastal high hazard", "premium_factor": 4.0},
-            "VE": {"level": "Very High", "description": "Coastal with wave action", "premium_factor": 4.5}
-        }
-        
-        risk_info = risk_levels.get(flood_zone, risk_levels["X"])
-        
-        return {
-            "location": location,
-            "coordinates": {"lat": lat, "lon": lon},
-            "flood_zone": flood_zone,
-            "risk_level": risk_info["level"],
-            "description": risk_info["description"],
-            "premium_impact_factor": risk_info["premium_factor"],
-            "recommendations": self._get_flood_recommendations(flood_zone),
-            "recent_flood_history": {
-                "last_major_flood": "2019-05-15",
-                "events_last_10_years": random.randint(0, 5),
-                "average_depth_inches": random.randint(0, 48)
-            },
-            "flood_insurance_required": flood_zone in ["A", "AE", "V", "VE"],
-            "base_flood_elevation_ft": random.randint(10, 50) if flood_zone != "X" else None,
-            "timestamp": datetime.now().isoformat()
-        }
+        try:
+            # Get county from coordinates
+            county_info = self._get_county_from_coords(lat, lon)
+            if not county_info:
+                # Try parsing location as ZIP code
+                county_info = get_county_for_zip(location)
+            
+            if not county_info:
+                return {
+                    "error": "Could not determine county from location",
+                    "location": location,
+                    "source": "OpenFEMA Disaster Declarations"
+                }
+            
+            # Get flood disaster declarations from FEMA
+            disaster_count = self._get_disaster_count(
+                county=county_info.get('county'),
+                state=county_info.get('state_abbr', 'US'),
+                hazard_type="flood"
+            )
+            
+            # Get NFIP claims data
+            claims_data = self._get_flood_claims(
+                county=county_info.get('county'),
+                state=county_info.get('state_abbr', 'US')
+            )
+            
+            # Calculate risk level based on FEMA data
+            risk_score = self._calculate_flood_risk_score(disaster_count, claims_data)
+            
+            return {
+                "location": location,
+                "coordinates": {"lat": lat, "lon": lon},
+                "county": county_info.get('county'),
+                "state": county_info.get('state'),
+                "flood_disasters_10_years": disaster_count,
+                "nfip_claims": claims_data.get('count', 0),
+                "total_claims_amount": claims_data.get('total_amount', 0),
+                "risk_score": risk_score,
+                "risk_level": self._get_risk_level(risk_score),
+                "premium_impact_factor": self._get_premium_factor(risk_score),
+                "recommendations": self._get_flood_recommendations(risk_score),
+                "data_sources": [
+                    "OpenFEMA DisasterDeclarationsSummaries",
+                    "OpenFEMA FimaNfipClaims"
+                ],
+                "source": "OpenFEMA",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            return {
+                "error": f"Failed to fetch FEMA flood data: {str(e)}",
+                "location": location,
+                "source": "OpenFEMA Disaster Declarations"
+            }
         
     def get_wildfire_risk_assessment(self, location: str, lat: float, lon: float) -> Dict[str, Any]:
-        """Get wildfire risk assessment for a location (insurance underwriting)
+        """Get wildfire risk assessment for a location using FEMA disaster data
         
         Args:
             location: Location name
@@ -301,57 +335,70 @@ class WeatherAgent:
             lon: Longitude
             
         Returns:
-            Dictionary containing wildfire risk data
+            Dictionary containing wildfire risk data based on actual FEMA disasters
         """
-        # Mock implementation - would integrate with USDA Forest Service, state fire agencies
-        zone_data = self.risk_zones.get(location, {})
-        
-        # Wildfire risk categories
-        risk_categories = ["Low", "Moderate", "High", "Very High", "Extreme"]
-        wildfire_risk = zone_data.get("wildfire_risk", random.choice(risk_categories[:3]))
-        
-        risk_factors = {
-            "Low": {"premium_factor": 1.0, "mitigation_required": False},
-            "Moderate": {"premium_factor": 1.3, "mitigation_required": False},
-            "High": {"premium_factor": 1.8, "mitigation_required": True},
-            "Very High": {"premium_factor": 2.5, "mitigation_required": True},
-            "Extreme": {"premium_factor": 3.5, "mitigation_required": True}
-        }
-        
-        risk_info = risk_factors.get(wildfire_risk, risk_factors["Low"])
-        
-        # Calculate wildfire hazard score (0-100)
-        vegetation_density = random.uniform(0.3, 0.9)
-        slope_factor = random.uniform(0.1, 0.7)
-        drought_index = random.uniform(0.0, 1.0)
-        
-        hazard_score = int((vegetation_density * 40 + slope_factor * 30 + drought_index * 30))
-        
-        return {
-            "location": location,
-            "coordinates": {"lat": lat, "lon": lon},
-            "wildfire_risk_level": wildfire_risk,
-            "hazard_score": hazard_score,
-            "premium_impact_factor": risk_info["premium_factor"],
-            "mitigation_required": risk_info["mitigation_required"],
-            "risk_factors": {
-                "vegetation_density": round(vegetation_density * 100, 1),
-                "terrain_slope": round(slope_factor * 100, 1),
-                "drought_index": round(drought_index * 100, 1),
-                "proximity_to_wildland": random.choice(["Within 1 mile", "1-3 miles", "3-5 miles", ">5 miles"])
-            },
-            "recent_fire_history": {
-                "fires_within_10_miles_last_5_years": random.randint(0, 8),
-                "acres_burned_nearby": random.randint(0, 50000),
-                "last_major_fire_distance_miles": round(random.uniform(2, 50), 1)
-            },
-            "recommendations": self._get_wildfire_recommendations(wildfire_risk),
-            "defensible_space_required_feet": 100 if risk_info["mitigation_required"] else 30,
-            "timestamp": datetime.now().isoformat()
+        try:
+            # Get county from coordinates
+            county_info = self._get_county_from_coords(lat, lon)
+            if not county_info:
+                county_info = get_county_for_zip(location)
+            
+            if not county_info:
+                return {
+                    "error": "Could not determine county from location",
+                    "location": location,
+                    "source": "OpenFEMA Disaster Declarations"
+                }
+            
+            # Get fire disaster declarations from FEMA
+            disaster_count = self._get_disaster_count(
+                county=county_info.get('county'),
+                state=county_info.get('state_abbr', 'US'),
+                hazard_type="wildfire"
+            )
+            
+            # Get public assistance data for fires
+            assistance_data = self._get_public_assistance(
+                county=county_info.get('county'),
+                state=county_info.get('state_abbr', 'US'),
+                hazard_type="wildfire"
+            )
+            
+            # Calculate risk level based on FEMA data
+            risk_score = self._calculate_wildfire_risk_score(disaster_count, assistance_data)
+            
+            return {
+                "location": location,
+                "coordinates": {"lat": lat, "lon": lon},
+                "county": county_info.get('county'),
+                "state": county_info.get('state'),
+                "fire_disasters_10_years": disaster_count,
+                "public_assistance_projects": assistance_data.get('count', 0),
+                "total_assistance_amount": assistance_data.get('total_amount', 0),
+                "risk_score": risk_score,
+                "wildfire_risk_level": self._get_risk_level(risk_score),
+                "premium_impact_factor": self._get_premium_factor(risk_score),
+                "mitigation_required": risk_score >= 50,
+                "defensible_space_required_feet": 100 if risk_score >= 50 else 30,
+                "recommendations": self._get_wildfire_recommendations_from_score(risk_score),
+                "data_sources": [
+                    "OpenFEMA DisasterDeclarationsSummaries",
+                    "OpenFEMA PublicAssistanceFundedProjectsDetails"
+                ],
+                "source": "OpenFEMA",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            return {
+                "error": f"Failed to fetch FEMA wildfire data: {str(e)}",
+                "location": location,
+                "source": "OpenFEMA Disaster Declarations"
+            }
         }
         
     def get_earthquake_risk_assessment(self, location: str, lat: float, lon: float) -> Dict[str, Any]:
-        """Get earthquake risk assessment for a location (insurance underwriting)
+        """Get earthquake risk assessment for a location using FEMA disaster data
         
         Args:
             location: Location name
@@ -359,57 +406,70 @@ class WeatherAgent:
             lon: Longitude
             
         Returns:
-            Dictionary containing earthquake risk data
+            Dictionary containing earthquake risk data based on actual FEMA disasters
         """
-        # Mock implementation - would integrate with USGS earthquake data
-        zone_data = self.risk_zones.get(location, {})
-        
-        # Seismic zones (based on USGS classifications)
-        seismic_zones = ["Zone 0", "Zone 1", "Zone 2A", "Zone 2B", "Zone 3", "Zone 4"]
-        seismic_zone = zone_data.get("seismic_zone", random.choice(seismic_zones[:3]))
-        
-        zone_risk = {
-            "Zone 0": {"risk": "Negligible", "pga": 0.02, "premium_factor": 1.0},
-            "Zone 1": {"risk": "Low", "pga": 0.075, "premium_factor": 1.1},
-            "Zone 2A": {"risk": "Moderate", "pga": 0.15, "premium_factor": 1.4},
-            "Zone 2B": {"risk": "Moderate", "pga": 0.20, "premium_factor": 1.6},
-            "Zone 3": {"risk": "High", "pga": 0.30, "premium_factor": 2.2},
-            "Zone 4": {"risk": "Very High", "pga": 0.40, "premium_factor": 3.0}
-        }
-        
-        zone_info = zone_risk.get(seismic_zone, zone_risk["Zone 0"])
-        
-        # Calculate expected ground motion
-        peak_ground_acceleration = zone_info["pga"]  # g-force
-        
-        return {
-            "location": location,
-            "coordinates": {"lat": lat, "lon": lon},
-            "seismic_zone": seismic_zone,
-            "risk_level": zone_info["risk"],
-            "peak_ground_acceleration_g": peak_ground_acceleration,
-            "premium_impact_factor": zone_info["premium_factor"],
-            "fault_proximity": {
-                "nearest_active_fault": f"{random.choice(['San Andreas', 'Hayward', 'Calaveras', 'N/A'])}",
-                "distance_to_fault_miles": round(random.uniform(0.5, 100), 1)
-            },
-            "earthquake_history": {
-                "magnitude_5plus_within_50_miles_10_years": random.randint(0, 15),
-                "last_significant_quake": {
-                    "magnitude": round(random.uniform(3.0, 6.5), 1),
-                    "date": "2022-08-14",
-                    "distance_miles": round(random.uniform(5, 100), 1)
+        try:
+            # Get county from coordinates
+            county_info = self._get_county_from_coords(lat, lon)
+            if not county_info:
+                county_info = get_county_for_zip(location)
+            
+            if not county_info:
+                return {
+                    "error": "Could not determine county from location",
+                    "location": location,
+                    "source": "OpenFEMA Disaster Declarations"
                 }
-            },
-            "building_code_requirements": {
-                "seismic_retrofit_required": seismic_zone in ["Zone 3", "Zone 4"],
-                "special_inspection_required": seismic_zone in ["Zone 3", "Zone 4"],
-                "reinforcement_standards": f"UBC {seismic_zone}"
-            },
-            "recommendations": self._get_earthquake_recommendations(seismic_zone),
-            "earthquake_insurance_recommended": seismic_zone in ["Zone 2B", "Zone 3", "Zone 4"],
-            "timestamp": datetime.now().isoformat()
-        }
+            
+            # Get earthquake disaster declarations from FEMA
+            disaster_count = self._get_disaster_count(
+                county=county_info.get('county'),
+                state=county_info.get('state_abbr', 'US'),
+                hazard_type="earthquake"
+            )
+            
+            # Get public assistance data for earthquakes
+            assistance_data = self._get_public_assistance(
+                county=county_info.get('county'),
+                state=county_info.get('state_abbr', 'US'),
+                hazard_type="earthquake"
+            )
+            
+            # Calculate risk level based on FEMA data
+            risk_score = self._calculate_earthquake_risk_score(disaster_count, assistance_data)
+            
+            return {
+                "location": location,
+                "coordinates": {"lat": lat, "lon": lon},
+                "county": county_info.get('county'),
+                "state": county_info.get('state'),
+                "earthquake_disasters_10_years": disaster_count,
+                "public_assistance_projects": assistance_data.get('count', 0),
+                "total_assistance_amount": assistance_data.get('total_amount', 0),
+                "risk_score": risk_score,
+                "risk_level": self._get_risk_level(risk_score),
+                "premium_impact_factor": self._get_premium_factor(risk_score),
+                "earthquake_insurance_recommended": risk_score >= 40,
+                "seismic_retrofit_required": risk_score >= 70,
+                "building_code_requirements": {
+                    "seismic_retrofit_required": risk_score >= 70,
+                    "special_inspection_required": risk_score >= 60
+                },
+                "recommendations": self._get_earthquake_recommendations_from_score(risk_score),
+                "data_sources": [
+                    "OpenFEMA DisasterDeclarationsSummaries",
+                    "OpenFEMA PublicAssistanceFundedProjectsDetails"
+                ],
+                "source": "OpenFEMA",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            return {
+                "error": f"Failed to fetch FEMA earthquake data: {str(e)}",
+                "location": location,
+                "source": "OpenFEMA Disaster Declarations"
+            }
         
     def get_comprehensive_property_risk(
         self,
@@ -514,6 +574,214 @@ class WeatherAgent:
         
         return None
         
+    def _get_county_from_coords(self, lat: float, lon: float) -> Optional[Dict[str, str]]:
+        """Get county information from coordinates using ZIP crosswalk
+        
+        Args:
+            lat: Latitude
+            lon: Longitude
+            
+        Returns:
+            Dictionary with county and state info, or None if not found
+        """
+        try:
+            # For now, use a simple approximation - in production would use proper reverse geocoding
+            # Try to approximate ZIP code from coordinates
+            # This is a placeholder - proper implementation would use Google's Reverse Geocoding or similar
+            return None
+        except Exception:
+            return None
+    
+    def _get_disaster_count(self, county: str, state: str, hazard_type: str) -> int:
+        """Get count of FEMA disasters for a county and hazard type
+        
+        Args:
+            county: County name
+            state: State abbreviation
+            hazard_type: Type of hazard (flood, wildfire, earthquake)
+            
+        Returns:
+            Count of disaster declarations in past 10 years
+        """
+        try:
+            start_date = datetime.now() - timedelta(days=self.window_years * 365)
+            date_filter = f"declarationDate ge '{start_date.strftime('%Y-%m-%d')}'"
+            state_filter = f"state eq '{state}'"
+            
+            incident_types = self.HAZARD_TYPES.get(hazard_type, [])
+            if incident_types:
+                type_filter = " OR ".join([f"incidentType eq '{t}'" for t in incident_types])
+                filter_str = f"{date_filter} AND {state_filter} AND ({type_filter})"
+            else:
+                filter_str = f"{date_filter} AND {state_filter}"
+            
+            url = f"{self.OPENFEMA_BASE}/DisasterDeclarationsSummaries"
+            params = {
+                "$filter": filter_str,
+                "$select": "designatedArea,incidentType",
+                "$top": 1000
+            }
+            
+            response = self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            disasters = data.get('DisasterDeclarationsSummaries', [])
+            
+            # Filter by county
+            county_disasters = [
+                d for d in disasters 
+                if county.lower() in d.get('designatedArea', '').lower()
+            ]
+            
+            return len(county_disasters)
+            
+        except Exception as e:
+            print(f"Error fetching FEMA disaster count: {e}")
+            return 0
+    
+    def _get_flood_claims(self, county: str, state: str) -> Dict[str, Any]:
+        """Get NFIP flood claims for a county
+        
+        Args:
+            county: County name
+            state: State abbreviation
+            
+        Returns:
+            Dictionary with claim count and total amount
+        """
+        try:
+            start_date = datetime.now() - timedelta(days=self.window_years * 365)
+            date_filter = f"dateOfLoss gt '{start_date.strftime('%Y-%m-%d')}'"
+            state_filter = f"state eq '{state}'"
+            
+            url = f"{self.OPENFEMA_BASE}/FimaNfipClaims"
+            params = {
+                "$filter": f"{date_filter} AND {state_filter}",
+                "$select": "amountPaidOnBuildingClaim,amountPaidOnContentsClaim",
+                "$top": 5000
+            }
+            
+            response = self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            claims = data.get('FimaNfipClaims', [])
+            
+            total_amount = 0
+            for claim in claims:
+                building = float(claim.get('amountPaidOnBuildingClaim', 0) or 0)
+                contents = float(claim.get('amountPaidOnContentsClaim', 0) or 0)
+                total_amount += building + contents
+            
+            return {
+                "count": len(claims),
+                "total_amount": total_amount
+            }
+            
+        except Exception as e:
+            print(f"Error fetching flood claims: {e}")
+            return {"count": 0, "total_amount": 0}
+    
+    def _get_public_assistance(self, county: str, state: str, hazard_type: str) -> Dict[str, Any]:
+        """Get public assistance data for disasters
+        
+        Args:
+            county: County name
+            state: State abbreviation
+            hazard_type: Type of hazard
+            
+        Returns:
+            Dictionary with project count and total obligated amount
+        """
+        try:
+            start_date = datetime.now() - timedelta(days=self.window_years * 365)
+            date_filter = f"declarationDate ge '{start_date.strftime('%Y-%m-%d')}'"
+            state_filter = f"state eq '{state}'"
+            county_filter = f"county eq '{county}'"
+            
+            filter_str = f"{date_filter} AND {state_filter} AND {county_filter}"
+            
+            url = f"{self.OPENFEMA_BASE}/PublicAssistanceFundedProjectsDetails"
+            params = {
+                "$filter": filter_str,
+                "$select": "totalObligatedAmount",
+                "$top": 5000
+            }
+            
+            response = self.client.get(url, params=params)
+            response.raise_for_status()
+            data = response.json()
+            
+            projects = data.get('PublicAssistanceFundedProjectsDetails', [])
+            
+            total_amount = sum(
+                float(p.get('totalObligatedAmount', 0) or 0)
+                for p in projects
+            )
+            
+            return {
+                "count": len(projects),
+                "total_amount": total_amount
+            }
+            
+        except Exception as e:
+            print(f"Error fetching public assistance: {e}")
+            return {"count": 0, "total_amount": 0}
+    
+    def _calculate_flood_risk_score(self, disaster_count: int, claims_data: Dict[str, Any]) -> float:
+        """Calculate flood risk score (0-100) based on FEMA data
+        
+        Args:
+            disaster_count: Number of flood disasters in window
+            claims_data: Dictionary with claim count and total
+            
+        Returns:
+            Risk score 0-100
+        """
+        # Frequency score: (disaster_count / 5) * 50, max 50
+        frequency_score = min(50, (disaster_count / 5.0) * 50)
+        
+        # Financial score: (total_claims / 10M) * 50, max 50
+        total_claims = claims_data.get('total_amount', 0)
+        financial_score = min(50, (total_claims / 10_000_000) * 50)
+        
+        return round(frequency_score + financial_score, 1)
+    
+    def _calculate_wildfire_risk_score(self, disaster_count: int, assistance_data: Dict[str, Any]) -> float:
+        """Calculate wildfire risk score (0-100) based on FEMA data"""
+        frequency_score = min(50, (disaster_count / 3.0) * 50)
+        financial_score = min(50, (assistance_data.get('total_amount', 0) / 5_000_000) * 50)
+        return round(frequency_score + financial_score, 1)
+    
+    def _calculate_earthquake_risk_score(self, disaster_count: int, assistance_data: Dict[str, Any]) -> float:
+        """Calculate earthquake risk score (0-100) based on FEMA data"""
+        frequency_score = min(50, (disaster_count / 2.0) * 50)
+        financial_score = min(50, (assistance_data.get('total_amount', 0) / 10_000_000) * 50)
+        return round(frequency_score + financial_score, 1)
+    
+    def _get_risk_level(self, risk_score: float) -> str:
+        """Convert risk score to risk level"""
+        if risk_score >= 75:
+            return "Severe"
+        elif risk_score >= 50:
+            return "High"
+        elif risk_score >= 25:
+            return "Moderate"
+        else:
+            return "Low"
+    
+    def _get_premium_factor(self, risk_score: float) -> float:
+        """Calculate premium impact factor from risk score"""
+        if risk_score >= 75:
+            return 3.5
+        elif risk_score >= 50:
+            return 2.0
+        elif risk_score >= 25:
+            return 1.3
+        else:
+            return 1.0
+        
     def _load_risk_zones(self) -> Dict[str, Dict[str, Any]]:
         """Load risk zone data (mock implementation)"""
         return {
@@ -539,24 +807,95 @@ class WeatherAgent:
             }
         }
         
-    def _get_flood_recommendations(self, flood_zone: str) -> List[str]:
-        """Get flood mitigation recommendations"""
-        if flood_zone in ["A", "AE", "V", "VE"]:
+    def _get_flood_recommendations(self, risk_score_or_zone) -> List[str]:
+        """Get flood mitigation recommendations based on risk score or zone"""
+        # Support both risk score (float) and zone (string) formats
+        if isinstance(risk_score_or_zone, (int, float)):
+            risk_score = risk_score_or_zone
+            if risk_score >= 75:
+                return [
+                    "CRITICAL: Flood insurance is required by mortgage lenders",
+                    "Elevation of utilities and HVAC systems strongly recommended",
+                    "Install flood vents and sump pump systems",
+                    "Maintain excellent drainage systems",
+                    "Develop detailed evacuation and emergency plans",
+                    "Monitor flood warnings closely during storm season"
+                ]
+            elif risk_score >= 50:
+                return [
+                    "Flood insurance is highly recommended",
+                    "Consider elevation of utilities and HVAC systems",
+                    "Install flood vents in foundation walls",
+                    "Maintain adequate drainage around property",
+                    "Keep emergency supplies and evacuation plan ready"
+                ]
+            elif risk_score >= 25:
+                return [
+                    "Flood insurance is recommended",
+                    "Monitor local weather and flood warnings",
+                    "Maintain proper grading away from foundation",
+                    "Consider flood vents or barriers"
+                ]
+            else:
+                return [
+                    "Monitor local weather and flood warnings",
+                    "Consider optional flood insurance for peace of mind",
+                    "Maintain proper grading away from foundation"
+                ]
+        else:
+            # Legacy zone-based recommendations
+            flood_zone = risk_score_or_zone
+            if flood_zone in ["A", "AE", "V", "VE"]:
+                return [
+                    "Flood insurance is required by mortgage lenders",
+                    "Consider elevation of utilities and HVAC systems",
+                    "Install flood vents in foundation walls",
+                    "Maintain adequate drainage around property",
+                    "Keep emergency supplies and evacuation plan ready"
+                ]
             return [
-                "Flood insurance is required by mortgage lenders",
-                "Consider elevation of utilities and HVAC systems",
-                "Install flood vents in foundation walls",
-                "Maintain adequate drainage around property",
-                "Keep emergency supplies and evacuation plan ready"
+                "Monitor local weather and flood warnings",
+                "Consider optional flood insurance for peace of mind",
+                "Maintain proper grading away from foundation"
             ]
-        return [
-            "Monitor local weather and flood warnings",
-            "Consider optional flood insurance for peace of mind",
-            "Maintain proper grading away from foundation"
-        ]
+        
+    def _get_wildfire_recommendations_from_score(self, risk_score: float) -> List[str]:
+        """Get wildfire mitigation recommendations based on FEMA risk score"""
+        if risk_score >= 75:
+            return [
+                "CRITICAL: Create and maintain 100+ foot defensible space around home",
+                "Use fire-resistant roofing (Class A) and siding materials",
+                "Remove all dead vegetation and maintain aggressive landscaping",
+                "Install ember-resistant vents and screens",
+                "Keep fire extinguishers and sprinkler systems accessible",
+                "Develop and regularly practice evacuation plan",
+                "Maintain access roads for emergency vehicles"
+            ]
+        elif risk_score >= 50:
+            return [
+                "Create and maintain 100-foot defensible space around home",
+                "Use fire-resistant roofing and siding materials",
+                "Remove dead vegetation and maintain landscaping",
+                "Install ember-resistant vents",
+                "Keep fire extinguishers accessible",
+                "Develop and practice evacuation plan"
+            ]
+        elif risk_score >= 25:
+            return [
+                "Maintain 50-foot defensible space around home",
+                "Trim branches away from roof and chimney",
+                "Remove dead vegetation regularly",
+                "Consider fire-resistant landscaping"
+            ]
+        else:
+            return [
+                "Maintain 30-foot defensible space around home",
+                "Remove dead vegetation regularly",
+                "Consider fire-resistant landscaping"
+            ]
         
     def _get_wildfire_recommendations(self, risk_level: str) -> List[str]:
-        """Get wildfire mitigation recommendations"""
+        """Get wildfire mitigation recommendations (legacy zone-based)"""
         if risk_level in ["High", "Very High", "Extreme"]:
             return [
                 "Create and maintain 100-foot defensible space around home",
@@ -572,8 +911,43 @@ class WeatherAgent:
             "Consider fire-resistant landscaping"
         ]
         
+    def _get_earthquake_recommendations_from_score(self, risk_score: float) -> List[str]:
+        """Get earthquake mitigation recommendations based on FEMA risk score"""
+        if risk_score >= 75:
+            return [
+                "REQUIRED: Seismic retrofit likely required for older structures",
+                "Bolt house to foundation immediately",
+                "Secure water heater, HVAC, and large appliances",
+                "Install automatic gas shut-off valve",
+                "Strengthen or replace cripple walls and crawl spaces",
+                "Earthquake insurance highly recommended",
+                "Maintain comprehensive emergency supplies"
+            ]
+        elif risk_score >= 50:
+            return [
+                "Seismic retrofit recommended for structures built before 1980",
+                "Bolt house to foundation",
+                "Secure water heater and large appliances",
+                "Install automatic gas shut-off valve",
+                "Consider earthquake insurance",
+                "Maintain emergency supplies"
+            ]
+        elif risk_score >= 25:
+            return [
+                "Secure heavy furniture and fixtures to walls",
+                "Have structural inspection for older buildings",
+                "Consider earthquake insurance",
+                "Keep emergency supplies on hand"
+            ]
+        else:
+            return [
+                "Secure heavy furniture and fixtures",
+                "Have structural inspection for older buildings",
+                "Keep emergency supplies on hand"
+            ]
+        
     def _get_earthquake_recommendations(self, seismic_zone: str) -> List[str]:
-        """Get earthquake mitigation recommendations"""
+        """Get earthquake mitigation recommendations (legacy zone-based)"""
         if seismic_zone in ["Zone 3", "Zone 4"]:
             return [
                 "Seismic retrofit may be required for older structures",
