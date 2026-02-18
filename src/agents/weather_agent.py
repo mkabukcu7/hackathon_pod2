@@ -1,9 +1,10 @@
 """
 Weather and Natural Disaster Risk Agent - Retrieves weather data and assesses 
 insurance-relevant natural disaster risks (floods, wildfires, earthquakes)
+Uses Azure Maps API for weather and environmental data
 """
 import os
-import requests
+import httpx
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 import random
@@ -17,19 +18,23 @@ from utils.parquet_loader import get_external_signals
 
 
 class WeatherAgent:
-    """Agent for retrieving weather information and natural disaster risk assessment"""
+    """Agent for retrieving weather information using Azure Maps and natural disaster risk assessment"""
+    
+    # Azure Maps API endpoints
+    AZURE_MAPS_WEATHER_BASE = "https://atlas.microsoft.com/weather"
+    AZURE_MAPS_SEARCH_BASE = "https://atlas.microsoft.com/search"
     
     def __init__(self, api_key: Optional[str] = None, use_parquet: bool = True):
         """Initialize the Weather Agent
         
         Args:
-            api_key: OpenWeatherMap API key (optional, defaults to env variable)
+            api_key: Azure Maps API key (optional, defaults to env variable)
             use_parquet: Whether to use Parquet data for external signals (True) or mock data (False)
         """
-        self.api_key = api_key or os.getenv("OPENWEATHER_API_KEY")
-        self.base_url = "https://api.openweathermap.org/data/2.5"
+        self.api_key = api_key or os.getenv("AZURE_MAPS_API_KEY")
         self.use_parquet = use_parquet
         self.external_signals_df = None
+        self.client = httpx.Client(timeout=30)
         
         # Try to load Parquet data
         if use_parquet:
@@ -42,99 +47,144 @@ class WeatherAgent:
         
         # Insurance risk zones data (mock - would come from FEMA, USGS, etc.)
         self.risk_zones = self._load_risk_zones()
+    
+    def __del__(self):
+        """Cleanup HTTP client"""
+        if hasattr(self, 'client'):
+            self.client.close()
         
     def get_current_weather(self, location: str, units: str = "metric") -> Dict[str, Any]:
-        """Get current weather for a location
+        """Get current weather for a location using Azure Maps
         
         Args:
-            location: City name or coordinates
-            units: Temperature units (metric, imperial, or standard)
+            location: City name or coordinates (lat,lon format)
+            units: Temperature units (metric or imperial)
             
         Returns:
             Dictionary containing weather data
         """
         if not self.api_key:
-            return {"error": "Weather API key not configured"}
+            return {"error": "Azure Maps API key not configured", "source": "Azure Maps Weather API"}
             
         try:
-            endpoint = f"{self.base_url}/weather"
+            # First, geocode the location using Azure Maps Search
+            coords = self._get_coordinates(location)
+            if not coords:
+                return {"error": f"Location '{location}' not found", "source": "Azure Maps Search API"}
+            
+            lat, lon = coords
+            
+            # Get current weather from Azure Maps Weather API
+            endpoint = f"{self.AZURE_MAPS_WEATHER_BASE}/currentConditions/json"
             params = {
-                "q": location,
-                "appid": self.api_key,
-                "units": units
+                "api-version": "1.0",
+                "query": f"{lat},{lon}",
+                "subscription-key": self.api_key,
+                "details": True  # Get additional details
             }
             
-            response = requests.get(endpoint, params=params, timeout=10)
+            response = self.client.get(endpoint, params=params)
             response.raise_for_status()
             
             data = response.json()
             
+            if not data.get("results"):
+                return {"error": "No weather data available", "source": "Azure Maps Weather API"}
+            
+            weather = data["results"][0]
+            
             return {
-                "location": data.get("name"),
-                "country": data.get("sys", {}).get("country"),
-                "temperature": data.get("main", {}).get("temp"),
-                "feels_like": data.get("main", {}).get("feels_like"),
-                "humidity": data.get("main", {}).get("humidity"),
-                "pressure": data.get("main", {}).get("pressure"),
-                "description": data.get("weather", [{}])[0].get("description"),
-                "wind_speed": data.get("wind", {}).get("speed"),
-                "clouds": data.get("clouds", {}).get("all"),
+                "location": location,
+                "coordinates": {"lat": lat, "lon": lon},
+                "temperature": weather.get("temperature", {}).get("value"),
+                "temperature_unit": weather.get("temperature", {}).get("unit"),
+                "feels_like": weather.get("realFeelTemperature", {}).get("value"),
+                "humidity": weather.get("relativeHumidity"),
+                "pressure": weather.get("pressure", {}).get("value"),
+                "pressure_unit": weather.get("pressure", {}).get("unit"),
+                "description": weather.get("weatherText"),
+                "wind_speed": weather.get("wind", {}).get("speed", {}).get("value"),
+                "wind_unit": weather.get("wind", {}).get("speed", {}).get("unit"),
+                "visibility": weather.get("visibility", {}).get("value"),
+                "uv_index": weather.get("uvIndex"),
+                "source": "Azure Maps Weather API",
                 "timestamp": datetime.now().isoformat()
             }
             
-        except requests.exceptions.RequestException as e:
-            return {"error": f"Failed to fetch weather data: {str(e)}"}
+        except Exception as e:
+            return {"error": f"Failed to fetch weather data: {str(e)}", "source": "Azure Maps Weather API"}
             
     def get_forecast(self, location: str, days: int = 5, units: str = "metric") -> Dict[str, Any]:
-        """Get weather forecast for a location
+        """Get weather forecast for a location using Azure Maps
         
         Args:
-            location: City name or coordinates
+            location: City name or coordinates (lat,lon format)
             days: Number of days for forecast (default 5)
-            units: Temperature units (metric, imperial, or standard)
+            units: Temperature units (metric or imperial)
             
         Returns:
             Dictionary containing forecast data
         """
         if not self.api_key:
-            return {"error": "Weather API key not configured"}
+            return {"error": "Azure Maps API key not configured", "source": "Azure Maps Forecast API"}
             
         try:
-            endpoint = f"{self.base_url}/forecast"
+            # Get coordinates for location
+            coords = self._get_coordinates(location)
+            if not coords:
+                return {"error": f"Location '{location}' not found", "source": "Azure Maps Search API"}
+            
+            lat, lon = coords
+            
+            # Get forecast from Azure Maps Weather API
+            # Note: Azure Maps offers 1, 5, and 10 day forecasts
+            duration = "5day" if days >= 5 else "1day"
+            endpoint = f"{self.AZURE_MAPS_WEATHER_BASE}/forecast/{duration}/json"
+            
             params = {
-                "q": location,
-                "appid": self.api_key,
-                "units": units,
-                "cnt": days * 8  # 8 data points per day (every 3 hours)
+                "api-version": "1.0",
+                "query": f"{lat},{lon}",
+                "subscription-key": self.api_key,
+                "details": True
             }
             
-            response = requests.get(endpoint, params=params, timeout=10)
+            response = self.client.get(endpoint, params=params)
             response.raise_for_status()
             
             data = response.json()
             
+            if not data.get("forecasts"):
+                return {"error": "No forecast data available", "source": "Azure Maps Forecast API"}
+            
             forecast_list = []
-            for item in data.get("list", []):
+            for forecast in data["forecasts"][:days]:
                 forecast_list.append({
-                    "datetime": item.get("dt_txt"),
-                    "temperature": item.get("main", {}).get("temp"),
-                    "description": item.get("weather", [{}])[0].get("description"),
-                    "humidity": item.get("main", {}).get("humidity"),
-                    "wind_speed": item.get("wind", {}).get("speed")
+                    "date": forecast.get("date"),
+                    "temperature_min": forecast.get("temperature", {}).get("minimum", {}).get("value"),
+                    "temperature_max": forecast.get("temperature", {}).get("maximum", {}).get("value"),
+                    "temperature_unit": forecast.get("temperature", {}).get("minimum", {}).get("unit"),
+                    "description_day": forecast.get("day", {}).get("iconPhrase"),
+                    "description_night": forecast.get("night", {}).get("iconPhrase"),
+                    "wind_speed": forecast.get("wind", {}).get("speed", {}).get("value"),
+                    "wind_unit": forecast.get("wind", {}).get("speed", {}).get("unit"),
+                    "rain_probability": forecast.get("day", {}).get("rainProbability"),
+                    "snow_probability": forecast.get("day", {}).get("snowProbability")
                 })
             
             return {
-                "location": data.get("city", {}).get("name"),
-                "country": data.get("city", {}).get("country"),
+                "location": location,
+                "coordinates": {"lat": lat, "lon": lon},
+                "forecast_days": len(forecast_list),
                 "forecast": forecast_list,
+                "source": "Azure Maps Forecast API",
                 "timestamp": datetime.now().isoformat()
             }
             
-        except requests.exceptions.RequestException as e:
-            return {"error": f"Failed to fetch forecast data: {str(e)}"}
+        except Exception as e:
+            return {"error": f"Failed to fetch forecast data: {str(e)}", "source": "Azure Maps Forecast API"}
             
     def get_air_quality(self, lat: float, lon: float) -> Dict[str, Any]:
-        """Get air quality data for coordinates
+        """Get air quality data for coordinates using Azure Maps
         
         Args:
             lat: Latitude
@@ -144,36 +194,57 @@ class WeatherAgent:
             Dictionary containing air quality data
         """
         if not self.api_key:
-            return {"error": "Weather API key not configured"}
+            return {"error": "Azure Maps API key not configured", "source": "Azure Maps Air Quality API"}
             
         try:
-            endpoint = f"{self.base_url}/air_pollution"
+            # Get current air quality index from Azure Maps
+            endpoint = f"{self.AZURE_MAPS_WEATHER_BASE}/currentConditions/json"
             params = {
-                "lat": lat,
-                "lon": lon,
-                "appid": self.api_key
+                "api-version": "1.0",
+                "query": f"{lat},{lon}",
+                "subscription-key": self.api_key,
+                "details": True
             }
             
-            response = requests.get(endpoint, params=params, timeout=10)
+            response = self.client.get(endpoint, params=params)
             response.raise_for_status()
             
             data = response.json()
             
-            aqi_map = {1: "Good", 2: "Fair", 3: "Moderate", 4: "Poor", 5: "Very Poor"}
+            if not data.get("results"):
+                return {"error": "No air quality data available", "source": "Azure Maps Air Quality API"}
             
-            if data.get("list"):
-                air_data = data["list"][0]
-                return {
-                    "air_quality_index": air_data.get("main", {}).get("aqi"),
-                    "quality_level": aqi_map.get(air_data.get("main", {}).get("aqi"), "Unknown"),
-                    "components": air_data.get("components", {}),
-                    "timestamp": datetime.now().isoformat()
-                }
+            weather = data["results"][0]
             
-            return {"error": "No air quality data available"}
+            # Map Azure AQI to quality levels
+            aqi = weather.get("airQuality", {}).get("aqi", -1)
+            aqi_category_map = {
+                1: "Good",
+                2: "Fair", 
+                3: "Moderate",
+                4: "Poor",
+                5: "Very Poor",
+                6: "Hazardous"
+            }
             
-        except requests.exceptions.RequestException as e:
-            return {"error": f"Failed to fetch air quality data: {str(e)}"}
+            return {
+                "coordinates": {"lat": lat, "lon": lon},
+                "air_quality_index": aqi,
+                "quality_level": aqi_category_map.get(aqi, "Unknown"),
+                "pollutants": {
+                    "pm2_5": weather.get("airQuality", {}).get("pm25"),
+                    "pm10": weather.get("airQuality", {}).get("pm10"),
+                    "no2": weather.get("airQuality", {}).get("no2"),
+                    "o3": weather.get("airQuality", {}).get("o3"),
+                    "so2": weather.get("airQuality", {}).get("so2"),
+                    "co": weather.get("airQuality", {}).get("co")
+                },
+                "source": "Azure Maps Air Quality API",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            return {"error": f"Failed to fetch air quality data: {str(e)}", "source": "Azure Maps Air Quality API"}
             
     def get_flood_risk_assessment(self, location: str, lat: float, lon: float) -> Dict[str, Any]:
         """Get flood risk assessment for a location (insurance underwriting)
@@ -399,6 +470,49 @@ class WeatherAgent:
             },
             "underwriting_notes": self._generate_underwriting_notes(flood_risk, wildfire_risk, earthquake_risk)
         }
+        
+    def _get_coordinates(self, location: str) -> Optional[tuple]:
+        """Get coordinates for a location using Azure Maps Search API
+        
+        Args:
+            location: Location name or coordinates (lat,lon format)
+            
+        Returns:
+            Tuple of (latitude, longitude) or None if not found
+        """
+        # Check if already in lat,lon format
+        try:
+            parts = location.split(",")
+            if len(parts) == 2:
+                lat, lon = float(parts[0].strip()), float(parts[1].strip())
+                return (lat, lon)
+        except (ValueError, AttributeError):
+            pass
+        
+        # Query Azure Maps Search API
+        try:
+            endpoint = f"{self.AZURE_MAPS_SEARCH_BASE}/address/json"
+            params = {
+                "api-version": "1.0",
+                "query": location,
+                "subscription-key": self.api_key
+            }
+            
+            response = self.client.get(endpoint, params=params)
+            response.raise_for_status()
+            
+            data = response.json()
+            
+            if data.get("results") and len(data["results"]) > 0:
+                coords = data["results"][0].get("position", {})
+                lat = coords.get("lat")
+                lon = coords.get("lon")
+                if lat and lon:
+                    return (lat, lon)
+        except Exception as e:
+            print(f"Error geocoding location: {e}")
+        
+        return None
         
     def _load_risk_zones(self) -> Dict[str, Dict[str, Any]]:
         """Load risk zone data (mock implementation)"""

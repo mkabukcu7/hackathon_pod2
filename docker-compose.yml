@@ -18,8 +18,8 @@ services:
       - AZURE_CLIENT_ID=${AZURE_CLIENT_ID}
       - AZURE_CLIENT_SECRET=${AZURE_CLIENT_SECRET}
       
-      # Weather API Configuration
-      - OPENWEATHER_API_KEY=${OPENWEATHER_API_KEY}
+      # Azure Maps Configuration (Weather and Environmental Data)
+      - AZURE_MAPS_API_KEY=${AZURE_MAPS_API_KEY}
       
       # Environmental API Configuration
       - ENVIRONMENTAL_API_KEY=${ENVIRONMENTAL_API_KEY}
