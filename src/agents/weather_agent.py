@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from utils.parquet_loader import get_external_signals
 from utils.zip_crosswalk import get_county_for_zip
+from services.openai_service import chat_completion, is_available as openai_available
 
 
 class WeatherAgent:
@@ -105,7 +106,7 @@ class WeatherAgent:
             
             weather = data["results"][0]
             
-            return {
+            result = {
                 "location": location,
                 "coordinates": {"lat": lat, "lon": lon},
                 "temperature": weather.get("temperature", {}).get("value"),
@@ -122,6 +123,16 @@ class WeatherAgent:
                 "source": "Azure Maps Weather API",
                 "timestamp": datetime.now().isoformat()
             }
+
+            # Enrich with AI insurance impact analysis
+            ai_narrative = self._ai_weather_insurance_analysis(result, "current")
+            if ai_narrative:
+                result["ai_insurance_narrative"] = ai_narrative
+                result["ai_generated"] = True
+            else:
+                result["ai_generated"] = False
+
+            return result
             
         except Exception as e:
             return {"error": f"Failed to fetch weather data: {str(e)}", "source": "Azure Maps Weather API"}
@@ -510,7 +521,7 @@ class WeatherAgent:
             earthquake_risk["premium_impact_factor"] * 0.3
         )
         
-        return {
+        result = {
             "property_address": property_address,
             "location": location,
             "coordinates": {"lat": lat, "lon": lon},
@@ -529,7 +540,80 @@ class WeatherAgent:
             },
             "underwriting_notes": self._generate_underwriting_notes(flood_risk, wildfire_risk, earthquake_risk)
         }
+
+        # Enrich with AI-generated comprehensive narrative
+        ai_narrative = self._ai_weather_insurance_analysis(result, "comprehensive")
+        if ai_narrative:
+            result["ai_underwriting_narrative"] = ai_narrative
+            result["ai_generated"] = True
+        else:
+            result["ai_generated"] = False
+
+        return result
         
+    # ---- Azure OpenAI helpers ------------------------------------------------
+
+    def _ai_weather_insurance_analysis(self, data: Dict[str, Any], data_type: str) -> Optional[str]:
+        """Generate AI-powered weather/risk insurance impact analysis.
+
+        Args:
+            data: The weather or risk data dictionary.
+            data_type: 'current' for weather, 'comprehensive' for property risk.
+
+        Returns:
+            Analysis string, or None if AI is unavailable.
+        """
+        if not openai_available():
+            return None
+
+        try:
+            if data_type == "current":
+                context = (
+                    f"Location: {data.get('location')}, "
+                    f"Temp: {data.get('temperature')}{data.get('temperature_unit', 'C')}, "
+                    f"Feels like: {data.get('feels_like')}, "
+                    f"Humidity: {data.get('humidity')}%, "
+                    f"Wind: {data.get('wind_speed')} {data.get('wind_unit', '')}, "
+                    f"UV: {data.get('uv_index')}, "
+                    f"Conditions: {data.get('description')}"
+                )
+                system_msg = (
+                    "You are an insurance weather risk analyst. Given current weather "
+                    "conditions, provide a concise 2-3 sentence assessment of how "
+                    "these conditions affect property and auto insurance risk today. "
+                    "Mention any actionable alerts for policyholders. Do NOT use markdown."
+                )
+            else:
+                flood_score = data.get('flood_risk', {}).get('risk_score', 0)
+                wildfire_score = data.get('wildfire_risk', {}).get('risk_score', 0)
+                earthquake_score = data.get('earthquake_risk', {}).get('risk_score', 0)
+                context = (
+                    f"Property: {data.get('property_address', data.get('location'))}, "
+                    f"Combined risk score: {data.get('combined_risk_score')}/100, "
+                    f"Overall rating: {data.get('overall_risk_rating')}, "
+                    f"Flood risk: {flood_score}/100, "
+                    f"Wildfire risk: {wildfire_score}/100, "
+                    f"Earthquake risk: {earthquake_score}/100, "
+                    f"Premium impact factor: {data.get('total_premium_impact_factor')}"
+                )
+                system_msg = (
+                    "You are a senior insurance underwriter. Given a comprehensive "
+                    "property risk assessment, write a 3-4 sentence underwriting "
+                    "narrative summarizing the key risks, premium implications, "
+                    "and required coverage. Be specific about which perils drive "
+                    "the most risk. Do NOT use markdown."
+                )
+
+            messages = [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": context},
+            ]
+
+            return chat_completion(messages, temperature=0.4, max_tokens=300)
+        except Exception as e:
+            print(f"AI weather analysis failed: {e}")
+            return None
+
     def _get_coordinates(self, location: str) -> Optional[tuple]:
         """Get coordinates for a location using Azure Maps Search API
         
@@ -609,10 +693,10 @@ class WeatherAgent:
             
             incident_types = self.HAZARD_TYPES.get(hazard_type, [])
             if incident_types:
-                type_filter = " OR ".join([f"incidentType eq '{t}'" for t in incident_types])
-                filter_str = f"{date_filter} AND {state_filter} AND ({type_filter})"
+                type_filter = " or ".join([f"incidentType eq '{t}'" for t in incident_types])
+                filter_str = f"{date_filter} and {state_filter} and ({type_filter})"
             else:
-                filter_str = f"{date_filter} AND {state_filter}"
+                filter_str = f"{date_filter} and {state_filter}"
             
             url = f"{self.OPENFEMA_BASE}/DisasterDeclarationsSummaries"
             params = {
@@ -656,7 +740,7 @@ class WeatherAgent:
             
             url = f"{self.OPENFEMA_BASE}/FimaNfipClaims"
             params = {
-                "$filter": f"{date_filter} AND {state_filter}",
+                "$filter": f"{date_filter} and {state_filter}",
                 "$select": "amountPaidOnBuildingClaim,amountPaidOnContentsClaim",
                 "$top": 5000
             }
@@ -696,10 +780,10 @@ class WeatherAgent:
         try:
             start_date = datetime.now() - timedelta(days=self.window_years * 365)
             date_filter = f"declarationDate ge '{start_date.strftime('%Y-%m-%d')}'"
-            state_filter = f"state eq '{state}'"
+            state_filter = f"stateAbbreviation eq '{state}'"
             county_filter = f"county eq '{county}'"
             
-            filter_str = f"{date_filter} AND {state_filter} AND {county_filter}"
+            filter_str = f"{date_filter} and {state_filter} and {county_filter}"
             
             url = f"{self.OPENFEMA_BASE}/PublicAssistanceFundedProjectsDetails"
             params = {

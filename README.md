@@ -1,6 +1,6 @@
-# Multi-Agent System for Weather, Environmental, and Azure Data
+# AI-Powered Insurance Agent Dashboard — Multi-Agent System
 
-A comprehensive multi-agent application built for hackathon_pod2 (Strategic Insurance Pod 2). This system integrates weather data, environmental information, and Azure resource management through a unified interface.
+A comprehensive multi-agent application built for hackathon_pod2 (Strategic Insurance Pod 2). This system integrates weather data, environmental information, customer intelligence, sales analytics, and hazard risk assessment through a unified web dashboard and REST API — all powered by Azure OpenAI GPT-4o-mini.
 
 ## Overview
 
@@ -9,34 +9,63 @@ This multi-agent application is inspired by the TechWorkshop-L300-AI-Apps-and-ag
 - **Weather Agent**: Real-time weather data, forecasts, air quality, and hazard risk assessment using Azure Maps and OpenFEMA
 - **Environmental Agent**: Pollution levels, climate data, ecosystem health, and water quality metrics via Azure Maps
 - **Azure Agent**: Azure resource management, cost analysis, service health, and security recommendations
-- **Agent Orchestrator**: Intelligent routing and coordination of multiple agents
+- **Customer Profile Agent**: Customer lookup, profile management, and AI-generated customer summaries from Parquet data
+- **Sales Intelligence Agent**: AI-powered cross-sell, up-sell recommendations, and personalized talking points
+- **Retention Insights Agent**: Customer insights, trend analysis, retention scoring, and churn prediction
 - **Hazard Risk Agent**: Flood, wildfire, and earthquake risk scoring using FEMA disaster data
+- **Agent Orchestrator**: GPT-4o-mini powered intelligent routing with keyword-based fallback
 
 ## Features
 
 - 🌤️ **Weather Data**: Current conditions, forecasts, and air quality from Azure Maps Weather API
 - 🌍 **Environmental Monitoring**: Pollution levels, climate trends via Azure Maps Environmental APIs
 - ☁️ **Azure Integration**: Resource management, cost tracking, and security insights via Azure SDK
-- 🌊 **Hazard Risk Assessment**: Flood, wildfire, and earthquake risk scoring using OpenFEMA disaster data and claims
+- 🌊 **Hazard Risk Assessment**: Flood, wildfire, and earthquake risk scoring using OpenFEMA disaster data
 - 📊 **Parquet Data Support**: 261K+ records from customer profiles, policies, claims, and environmental signals
-- 🤖 **Multi-Agent Orchestration**: Natural language query processing with intelligent agent routing
-- 🌐 **REST API**: FastAPI-based web service with comprehensive endpoints
+- 🤖 **AI-Powered Intelligence**: All 7 agents + orchestrator enriched with Azure OpenAI GPT-4o-mini narratives
+- 👤 **Customer Profiles**: 60K customer profiles with AI-generated summaries, searchable by ID/state/region/ZIP
+- 💰 **Sales Intelligence**: AI-driven cross-sell, up-sell recommendations, and personalized talking points
+- 📈 **Retention Analytics**: Customer insights, trend analysis, retention scoring, and churn prediction
+- 🌐 **Web Dashboard**: Interactive browser-based dashboard with live weather, AI insights, and customer management
+- 🌐 **REST API**: FastAPI-based web service with 25+ endpoints
 - 💻 **CLI Interface**: Interactive command-line interface for easy access
 
 ## Architecture
 
 ```
 src/
-├── agents/               # Individual agent implementations
-│   ├── weather_agent.py
-│   ├── environmental_agent.py
-│   └── azure_agent.py
-├── orchestrator.py       # Agent coordination and routing
-├── main.py              # CLI application
-└── api.py               # FastAPI web service
+├── agents/                        # Individual agent implementations
+│   ├── weather_agent.py           # Azure Maps weather + FEMA risk + AI narratives
+│   ├── environmental_agent.py     # Azure Maps environmental + AI analysis
+│   ├── azure_agent.py             # Azure resource management + AI analysis
+│   ├── customer_profile_agent.py  # Parquet customer profiles + AI summaries
+│   ├── sales_intelligence_agent.py # AI cross-sell, up-sell, talking points
+│   ├── retention_insights_agent.py # AI insights, trends, retention scoring
+│   └── hazard_risk_agent.py       # FEMA hazard risk scoring + AI narratives
+├── services/
+│   ├── openai_service.py          # Azure OpenAI GPT-4o-mini client (Entra ID auth)
+│   └── cosmos_db_service.py       # Cosmos DB integration
+├── utils/
+│   ├── parquet_loader.py          # Parquet data loading with region correction
+│   ├── zip_crosswalk.py           # ZIP-to-county mapping (20 states)
+│   └── cache.py                   # Hazard risk cache (24-hour TTL)
+├── orchestrator.py                # GPT-4o-mini intelligent routing + keyword fallback
+├── main.py                        # CLI application
+└── api.py                         # FastAPI web service (25+ endpoints)
+
+web/
+├── templates/
+│   └── index.html                 # Dashboard UI
+└── static/
+    ├── css/styles.css              # Dashboard styles
+    └── js/dashboard.js             # Dashboard logic (live API, AI formatting)
+
+data/
+├── *.parquet                      # 7 Parquet files (261K+ records)
+└── zip_county_crosswalk.csv       # ZIP-to-county mapping
 
 examples/
-└── examples.py          # Usage examples
+└── examples.py                    # Usage examples
 ```
 
 ## Installation
@@ -75,11 +104,24 @@ cp .env.example .env
 
 Edit the `.env` file with your credentials:
 
-- **Azure Maps API Key**: Get from [Azure Portal](https://portal.azure.com/) > Azure Maps resource > Authentication > Primary Key
-  - Provides weather, air quality, and environmental data
-  - No separate credentials needed for OpenFEMA (public API)
-- **Azure Credentials**: Set up Azure service principal credentials (subscription ID, tenant ID, client ID, client secret)
-- **Azure OpenAI**: Configure for agent orchestration (endpoint and API key)
+```env
+# Azure OpenAI (GPT-4o-mini) - Powers all AI features
+AZURE_OPENAI_ENDPOINT=https://<your-openai-resource>.openai.azure.com/
+AZURE_OPENAI_API_KEY=<your-api-key>
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-mini
+AZURE_OPENAI_API_VERSION=2024-02-15-preview
+
+# Azure Service Principal (Entra ID auth)
+AZURE_SUBSCRIPTION_ID=<your-subscription-id>
+AZURE_TENANT_ID=<your-tenant-id>
+AZURE_CLIENT_ID=<your-client-id>
+AZURE_CLIENT_SECRET=<your-client-secret>
+
+# Azure Maps (Weather & Environmental data)
+AZURE_MAPS_API_KEY=<your-maps-api-key>
+```
+
+> **Note**: The OpenAI service uses **Entra ID authentication** via `ClientSecretCredential` + `get_bearer_token_provider` (not API key auth) when `disableLocalAuth` is enabled by subscription policy. The API key field is still required in `.env` but Entra ID tokens are used for actual authentication.
 
 ## Usage
 
@@ -143,6 +185,58 @@ curl -X POST "http://localhost:8000/api/report" \
   -d '{"location": "New York"}'
 ```
 
+### Web Dashboard
+
+The application includes an interactive web dashboard for customer management and AI-powered intelligence.
+
+Start the server and open `http://localhost:8000` in your browser:
+```bash
+cd src
+python api.py
+```
+
+**Dashboard Features:**
+- 📊 **Live Statistics**: Total customers, active policies, claims count, average premium (from Parquet data)
+- 🔍 **Customer Search**: Search by customer ID, state, region, ZIP code, or income band
+- 👤 **Customer Profiles**: Full profile with demographics, policies, claims, risk score, and AI summary
+- 🌤️ **Weather Widget**: Real-time weather for the customer's location with AI insurance impact analysis
+- 🌍 **Hazard Risk Cards**: Flood, wildfire, and earthquake risk scores by ZIP code
+- 💰 **Cross-Sell/Up-Sell**: AI-generated product recommendations with confidence scores and talking points
+- 💡 **Insights & Trends**: AI-powered customer insights, trend analysis, and retention scoring
+- 💬 **Talking Points**: AI-generated conversation guides with greeting, relationship highlights, objection handlers, and closing
+- 🤖 **AI Badge**: Visual indicator on all AI-generated content
+
+#### Additional Customer API Endpoints
+
+```bash
+# Search customers
+curl "http://localhost:8000/api/customers/search?query=NC&limit=50"
+
+# Get customer profile
+curl "http://localhost:8000/api/customers/C0052225"
+
+# Get customer statistics
+curl "http://localhost:8000/api/customers/stats"
+
+# Cross-sell recommendations
+curl "http://localhost:8000/api/customers/C0052225/cross-sell"
+
+# Up-sell recommendations
+curl "http://localhost:8000/api/customers/C0052225/upsell"
+
+# Customer insights
+curl "http://localhost:8000/api/customers/C0052225/insights"
+
+# Customer trends
+curl "http://localhost:8000/api/customers/C0052225/trends"
+
+# Retention score
+curl "http://localhost:8000/api/customers/C0052225/retention"
+
+# Talking points
+curl "http://localhost:8000/api/customers/C0052225/talking-points?context=sales"
+```
+
 ### Examples
 
 Run the example scripts:
@@ -153,33 +247,56 @@ python examples.py
 
 ## Agent Capabilities
 
-### Weather Agent (Azure Maps + OpenFEMA)
-- `get_current_weather(location, units)` - Current weather conditions via Azure Maps
+### Weather Agent (Azure Maps + OpenFEMA + AI)
+- `get_current_weather(location, units)` - Current weather conditions via Azure Maps + AI insurance impact narrative
 - `get_forecast(location, days, units)` - 5-day weather forecast via Azure Maps
 - `get_air_quality(lat, lon)` - Air quality index and pollutant components (PM2.5, PM10, NO2, O3, SO2, CO) via Azure Maps
 - `get_flood_risk_assessment()` - Flood risk scoring using FEMA disaster declarations and NFIP claims
 - `get_wildfire_risk_assessment()` - Wildfire risk scoring using FEMA disaster declarations and public assistance
 - `get_earthquake_risk_assessment()` - Earthquake risk scoring using FEMA disaster declarations and public assistance
+- AI: `_ai_weather_insurance_analysis()` - GPT-4o-mini insurance weather impact and underwriting narratives
 
-### Environmental Agent (Azure Maps)
-- `get_pollution_data(location)` - Air quality index and pollutant metrics via Azure Maps
-- `get_climate_data(region, timeframe)` - Current conditions and 5-day forecasts via Azure Maps
+### Environmental Agent (Azure Maps + AI)
+- `get_pollution_data(location)` - Air quality index and pollutant metrics via Azure Maps + AI insurance risk analysis
+- `get_climate_data(region, timeframe)` - Current conditions and 5-day forecasts via Azure Maps + AI analysis
 - `get_ecosystem_health(ecosystem_type, location)` - Ecosystem health metrics (mock implementation)
 - `get_water_quality(water_body, location)` - Water quality parameters (mock implementation)
 - `get_environmental_alerts(location, alert_types)` - Environmental alerts based on conditions (mock implementation)
+- AI: `_ai_environmental_analysis()` - GPT-4o-mini insurance-relevant environmental risk analysis
 
-### Azure Agent
+### Azure Agent (AI-Enriched)
 - `get_resource_groups()` - List Azure resource groups
 - `get_resources_in_group(resource_group)` - Resources in a group
 - `get_resource_metrics(resource_id, metric_names)` - Resource metrics
-- `get_cost_analysis(resource_group, time_period)` - Cost analysis
+- `get_cost_analysis(resource_group, time_period)` - Cost analysis + AI cost optimization narrative
 - `get_service_health()` - Azure service health status
-- `get_security_recommendations(resource_group)` - Security recommendations
+- `get_security_recommendations(resource_group)` - Security recommendations + AI security narrative
 
-### Hazard Risk Agent (OpenFEMA Integration)
+### Customer Profile Agent (Parquet + AI)
+- `search_customer(query, limit)` - Search by customer ID, state, region, ZIP code, or income band
+- `get_customer_profile(customer_id)` - Full profile with policies, claims, and AI-generated summary
+- `get_customer_policies(customer_id)` - Customer's insurance policies from Parquet data
+- `get_stats()` - Overall statistics (total customers, policies, claims, premiums)
+- AI: `_ai_generate_summary()` - GPT-4o-mini call-prep narrative for each customer
+
+### Sales Intelligence Agent (AI-Powered)
+- `get_cross_sell_recommendations(customer_id, customer_data)` - AI-generated cross-sell with confidence scores
+- `get_upsell_recommendations(customer_id, customer_data)` - AI-generated policy upgrades
+- `get_talking_points(customer_id, customer_data, context)` - Personalized conversation guides with greeting, relationship highlights, conversation starters, key facts, objection handlers, and closing
+- `get_retention_offers(customer_id, customer_data)` - Retention-focused offers
+- All methods: AI-first with rule-based fallback, `ai_generated` flag
+
+### Retention Insights Agent (AI-Powered)
+- `get_customer_insights(customer_id, customer_data)` - AI-generated customer insights with categories and actions
+- `get_customer_trends(customer_id, customer_data)` - Trend analysis with predictions (retention probability, upsell readiness, churn risk)
+- `get_retention_score(customer_id, customer_data)` - Retention scoring with AI recommendations
+- All methods: AI-first with rule-based fallback, `ai_generated` flag
+
+### Hazard Risk Agent (OpenFEMA + AI)
 - `get_flood_risk(zip_code)` - Flood risk assessment using OpenFEMA NFIP claims and disaster declarations
 - `get_wildfire_risk(zip_code)` - Wildfire risk assessment using OpenFEMA disaster data and public assistance
 - `get_earthquake_risk(zip_code)` - Earthquake risk assessment using OpenFEMA disaster data and public assistance
+- AI: `_ai_risk_narrative()` - GPT-4o-mini underwriting narrative for risk assessments
 
 #### Hazard Risk Scoring
 The Hazard Risk Agent and Weather Agent compute risk scores (0-100) based on:
@@ -208,24 +325,32 @@ curl "http://localhost:8000/api/weather/flood-risk?location=Los%20Angeles,%20CA"
 
 ### Quick Setup with Automation Scripts
 
-The fastest way to set up all Azure resources:
+The fastest way to set up all Azure resources.
+
+**Prerequisites:** Sign in to Azure CLI first using device code authentication:
+```bash
+az login --use-device-code
+```
+This will display a code and URL — open the URL in your browser, enter the code, and sign in with your Azure account.
 
 #### Windows (PowerShell):
 ```powershell
-.\setup-resources.ps1
+.\setup-resources.ps1                  # Full setup (with Key Vault)
+.\setup-resources.ps1 -SkipKeyVault    # Skip Key Vault (recommended for hackathon)
 ```
 
 #### Linux/Mac (Bash):
 ```bash
 chmod +x setup-resources.sh
-./setup-resources.sh
+./setup-resources.sh                           # Full setup (with Key Vault)
+SKIP_KEYVAULT=true ./setup-resources.sh        # Skip Key Vault (recommended for hackathon)
 ```
 
 These scripts will automatically create:
-- ✅ Azure Maps (S0) - Weather and environmental data
-- ✅ Azure OpenAI - Agent orchestration
+- ✅ Azure Maps (G2) - Weather and environmental data
+- ✅ Azure OpenAI (gpt-4o-mini) - Agent orchestration
 - ✅ Service Principal - Azure resource management
-- ✅ Key Vault - Secure credential storage
+- ⬜ Key Vault - Secure credential storage (optional, skip with `-SkipKeyVault`)
 - ✅ `.env.generated` file with all credentials
 
 ### Manual Setup
@@ -257,12 +382,18 @@ For step-by-step instructions, see [AZURE_SETUP.md](./AZURE_SETUP.md)
 ### Project Structure
 
 The application follows the TechWorkshop-L300-AI-Apps-and-agents pattern with:
-- Modular agent architecture
-- Clear separation of concerns
-- Extensible design for adding new agents
-- RESTful API design
-- Comprehensive error handling
-- Parquet data integration with automatic fallback
+- Modular agent architecture (7 agents + orchestrator)
+- AI-first with rule-based fallback pattern across all agents
+- Azure OpenAI GPT-4o-mini integration via shared `openai_service.py`
+- Entra ID authentication (service principal) for Azure OpenAI
+- Clear separation of concerns (agents → services → utils)
+- Parquet data integration with 60K customers, 90K policies, ~20K claims
+- US Census Bureau region correction in `parquet_loader.py`
+- ZIP-to-county crosswalk for 20 states
+- Interactive web dashboard with live API data
+- OData v4 compliant FEMA queries (lowercase `and`/`or`)
+- FastAPI with `pattern=` parameter validation (no deprecated `regex=`)
+- Comprehensive error handling and graceful degradation
 
 ### Adding New Agents
 
@@ -355,9 +486,19 @@ The system includes 261,946+ records across 7 Parquet files (~5.5 MB):
 **Location:** `data/` directory (excluded from version control)
 
 ### External APIs
-- **Azure Maps**: Weather, air quality, environmental data, and geocoding
-- **OpenFEMA v2**: Federal disaster declarations, NFIP claims, and public assistance data
-- **Azure OpenAI**: Agent orchestration and natural language processing
+- **Azure Maps (G2)**: Weather, air quality, environmental data, and geocoding
+- **OpenFEMA v2**: Federal disaster declarations, NFIP claims, and public assistance data (OData v4 syntax)
+- **Azure OpenAI (GPT-4o-mini)**: AI-powered agent intelligence across all 7 agents + orchestrator
+  - Deployment: `gpt-4o-mini` (model version `2024-07-18`)
+  - Authentication: Entra ID via `ClientSecretCredential` + `get_bearer_token_provider`
+  - Features: Customer summaries, risk narratives, sales recommendations, retention insights, weather analysis, query routing
+
+### OpenAI Service (`src/services/openai_service.py`)
+Singleton Azure OpenAI client with:
+- `chat_completion(messages, temperature, max_tokens, response_format)` → `Optional[str]`
+- `is_available()` → `bool`
+- Entra ID auth scope: `https://cognitiveservices.azure.com/.default`
+- All agents use AI-first with rule-based fallback pattern
 
 ## Acknowledgments
 

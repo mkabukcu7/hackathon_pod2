@@ -4,7 +4,8 @@
 param(
     [string]$ResourceGroup = "hackathon-pod2-rg",
     [string]$Location = "eastus",
-    [string]$Environment = "dev"
+    [string]$Environment = "dev",
+    [switch]$SkipKeyVault
 )
 
 $ErrorActionPreference = "Stop"
@@ -72,15 +73,20 @@ function New-ResourceGroup {
 function New-AzureMaps {
     Write-Info "Creating Azure Maps: $MAPS_NAME..."
     
-    try {
-        az maps account show --name $MAPS_NAME --resource-group $ResourceGroup | Out-Null
+    $existing = az maps account show --name $MAPS_NAME --resource-group $ResourceGroup 2>$null
+    
+    if ($existing) {
         Write-Warn "Azure Maps already exists: $MAPS_NAME"
-    } catch {
+    } else {
         az maps account create `
             --name $MAPS_NAME `
             --resource-group $ResourceGroup `
-            --sku S0 `
-            --kind Gen2
+            --sku G2
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error-Custom "Failed to create Azure Maps. Check your subscription and region."
+            return
+        }
         Write-Info "Azure Maps created successfully"
     }
     
@@ -90,17 +96,22 @@ function New-AzureMaps {
         --query "primaryKey" `
         --output tsv
     
-    Write-Info "Azure Maps API Key: $($MAPS_KEY.Substring(0, 20))..."
+    if ($MAPS_KEY) {
+        Write-Info "Azure Maps API Key: $($MAPS_KEY.Substring(0, [Math]::Min(20, $MAPS_KEY.Length)))..."
+    } else {
+        Write-Error-Custom "Failed to retrieve Azure Maps API key"
+    }
 }
 
 # Create Azure OpenAI
 function New-AzureOpenAI {
     Write-Info "Creating Azure OpenAI: $OPENAI_NAME..."
     
-    try {
-        az cognitiveservices account show --name $OPENAI_NAME --resource-group $ResourceGroup | Out-Null
+    $existing = az cognitiveservices account show --name $OPENAI_NAME --resource-group $ResourceGroup 2>$null
+    
+    if ($existing) {
         Write-Warn "Azure OpenAI already exists: $OPENAI_NAME"
-    } catch {
+    } else {
         az cognitiveservices account create `
             --name $OPENAI_NAME `
             --resource-group $ResourceGroup `
@@ -108,6 +119,11 @@ function New-AzureOpenAI {
             --sku s0 `
             --location $Location `
             --yes
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error-Custom "Failed to create Azure OpenAI. Check your subscription and region."
+            return
+        }
         Write-Info "Azure OpenAI created successfully"
     }
     
@@ -124,7 +140,9 @@ function New-AzureOpenAI {
         --output tsv
     
     Write-Info "Azure OpenAI Endpoint: $OPENAI_ENDPOINT"
-    Write-Info "Azure OpenAI API Key: $($OPENAI_KEY.Substring(0, 20))..."
+    if ($OPENAI_KEY) {
+        Write-Info "Azure OpenAI API Key: $($OPENAI_KEY.Substring(0, [Math]::Min(20, $OPENAI_KEY.Length)))..."
+    }
 }
 
 # Deploy model
@@ -137,21 +155,28 @@ function Deploy-Model {
     
     Write-Info "Deploying $Model as $DeploymentName..."
     
-    try {
-        az cognitiveservices account deployment show `
-            --name $OPENAI_NAME `
-            --resource-group $ResourceGroup `
-            --deployment-name $DeploymentName | Out-Null
+    $existing = az cognitiveservices account deployment show `
+        --name $OPENAI_NAME `
+        --resource-group $ResourceGroup `
+        --deployment-name $DeploymentName 2>$null
+    
+    if ($existing) {
         Write-Warn "Deployment already exists: $DeploymentName"
-    } catch {
+    } else {
         az cognitiveservices account deployment create `
             --name $OPENAI_NAME `
             --resource-group $ResourceGroup `
             --deployment-name $DeploymentName `
             --model-name $Model `
             --model-version $Version `
+            --model-format OpenAI `
             --sku-capacity 1 `
             --sku-name "Standard"
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error-Custom "Failed to deploy model. Check available models in your region."
+            return
+        }
         Write-Info "Model deployed successfully"
     }
     
@@ -183,21 +208,31 @@ function New-ServicePrincipal {
     }
     
     Write-Info "Service Principal Client ID: $CLIENT_ID"
-    Write-Info "Service Principal Client Secret: $($CLIENT_SECRET.Substring(0, 20))..."
+    if ($CLIENT_SECRET -and $CLIENT_SECRET.Length -gt 20) {
+        Write-Info "Service Principal Client Secret: $($CLIENT_SECRET.Substring(0, 20))..."
+    } else {
+        Write-Info "Service Principal Client Secret: (set)"
+    }
 }
 
 # Create Key Vault
 function New-KeyVault {
     Write-Info "Creating Key Vault: $KEYVAULT_NAME..."
     
-    try {
-        az keyvault show --name $KEYVAULT_NAME --resource-group $ResourceGroup | Out-Null
+    $existing = az keyvault show --name $KEYVAULT_NAME --resource-group $ResourceGroup 2>$null
+    
+    if ($existing) {
         Write-Warn "Key Vault already exists: $KEYVAULT_NAME"
-    } catch {
+    } else {
         az keyvault create `
             --name $KEYVAULT_NAME `
             --resource-group $ResourceGroup `
             --location $Location
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Error-Custom "Failed to create Key Vault."
+            return
+        }
         Write-Info "Key Vault created successfully"
     }
     
@@ -269,21 +304,23 @@ function Display-Summary {
     Write-Host ""
     Write-Host "Azure Maps:"
     Write-Host "  Name: $MAPS_NAME"
-    Write-Host "  API Key: $($MAPS_KEY.Substring(0, 20))..."
+    if ($MAPS_KEY) { Write-Host "  API Key: $($MAPS_KEY.Substring(0, [Math]::Min(20, $MAPS_KEY.Length)))..." }
     Write-Host ""
     Write-Host "Azure OpenAI:"
     Write-Host "  Name: $OPENAI_NAME"
     Write-Host "  Endpoint: $OPENAI_ENDPOINT"
     Write-Host "  Deployment: $OPENAI_DEPLOYMENT_NAME"
-    Write-Host "  API Key: $($OPENAI_KEY.Substring(0, 20))..."
+    if ($OPENAI_KEY) { Write-Host "  API Key: $($OPENAI_KEY.Substring(0, [Math]::Min(20, $OPENAI_KEY.Length)))..." }
     Write-Host ""
     Write-Host "Service Principal:"
     Write-Host "  Client ID: $CLIENT_ID"
     Write-Host "  Tenant ID: $TENANT_ID"
     Write-Host ""
-    Write-Host "Key Vault:"
-    Write-Host "  Name: $KEYVAULT_NAME"
-    Write-Host ""
+    if (-not $SkipKeyVault) {
+        Write-Host "Key Vault:"
+        Write-Host "  Name: $KEYVAULT_NAME"
+        Write-Host ""
+    }
     Write-Host "Generated .env file: .env.generated" -ForegroundColor Yellow
     Write-Host "Review and merge with your .env file" -ForegroundColor Yellow
     Write-Host ""
@@ -297,8 +334,12 @@ Check-Prerequisites
 New-ResourceGroup
 New-AzureMaps
 New-AzureOpenAI
-Deploy-Model -Model "gpt-35-turbo" -DeploymentName "gpt-35-turbo" -Version "0613"
+Deploy-Model -Model "gpt-4o-mini" -DeploymentName "gpt-4o-mini" -Version "2024-07-18"
 New-ServicePrincipal
-New-KeyVault
+if (-not $SkipKeyVault) {
+    New-KeyVault
+} else {
+    Write-Warn "Skipping Key Vault creation (use .env file for secrets)"
+}
 New-EnvFile
 Display-Summary

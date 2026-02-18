@@ -1,9 +1,12 @@
 """
 Sales Intelligence Agent - Provides cross-sell and up-sell recommendations
+Powered by Azure OpenAI GPT-4o-mini for AI-generated recommendations with rule-based fallback.
 """
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
+import json
 import random
+import logging
 import sys
 import os
 import pandas as pd
@@ -16,6 +19,9 @@ from utils.parquet_loader import (
     get_policies,
     get_producer_activity
 )
+from services.openai_service import chat_completion, is_available as openai_available
+
+logger = logging.getLogger(__name__)
 
 
 class SalesIntelligenceAgent:
@@ -59,21 +65,159 @@ class SalesIntelligenceAgent:
         except Exception as e:
             print(f"Error loading Parquet data: {e}")
             return None
+
+    # ------------------------------------------------------------------ #
+    #  GPT-4o-mini AI enhancement helpers
+    # ------------------------------------------------------------------ #
+    def _build_customer_summary(self, customer_id: str, customer_data: Dict[str, Any]) -> str:
+        """Build a concise text summary of the customer for LLM prompts."""
+        policies = customer_data.get("policies", [])
+        policy_lines = ", ".join(
+            f"{p.get('type', 'Unknown')} ({p.get('coverage', 'Standard')}, ${p.get('premium', 0):,.0f})"
+            for p in policies[:6]
+        ) or "none"
+        claims = customer_data.get("claim_history", [])
+        return (
+            f"Customer {customer_id}: "
+            f"Type={customer_data.get('type', 'Standard')}, "
+            f"State={customer_data.get('state', 'N/A')}, "
+            f"Age={customer_data.get('age', 'N/A')}, "
+            f"MaritalStatus={customer_data.get('marital_status', 'N/A')}, "
+            f"HasKids={customer_data.get('has_kids', 'N/A')}, "
+            f"IsHomeOwner={customer_data.get('is_home_owner', 'N/A')}, "
+            f"Satisfaction={customer_data.get('satisfaction_score', 'N/A')}/5, "
+            f"CurrentPolicies=[{policy_lines}] ({len(policies)} total), "
+            f"Claims={len(claims)}, "
+            f"Lifetime Value=${customer_data.get('lifetime_value', 0):,.0f}"
+        )
+
+    def _ai_cross_sell(self, customer_id: str, customer_data: Dict[str, Any]) -> Optional[List[Dict]]:
+        """Use GPT-4o-mini to generate cross-sell recommendations."""
+        if not openai_available():
+            return None
+
+        summary = self._build_customer_summary(customer_id, customer_data)
+        current_types = [p.get("type", "") for p in customer_data.get("policies", [])]
+
+        messages = [
+            {"role": "system", "content": (
+                "You are an expert insurance sales analytics AI. "
+                "Given a customer profile, recommend insurance products the customer does NOT already have. "
+                "Available products: Auto Insurance, Home Insurance, Life Insurance, "
+                "Umbrella Liability Insurance, Pet Insurance, Renters Insurance, "
+                "Commercial Insurance, Motorcycle Insurance.\n"
+                "Return a JSON object with key \"recommendations\" containing an array. "
+                "Each item: {\"product\": str, \"priority\": High|Medium|Low, "
+                "\"confidence\": 0.0-1.0, \"reasoning\": str, "
+                "\"potential_premium\": number, \"bundle_discount\": number 0-20, "
+                "\"talking_points\": [str, str, str]}. "
+                "Return 2-4 recommendations. Return ONLY JSON."
+            )},
+            {"role": "user", "content": f"{summary}\nCurrently has: {current_types}"},
+        ]
+        raw = chat_completion(messages, temperature=0.6, max_tokens=900,
+                              response_format={"type": "json_object"})
+        if raw is None:
+            return None
+        try:
+            parsed = json.loads(raw)
+            recs = parsed.get("recommendations", parsed if isinstance(parsed, list) else [])
+            return recs if isinstance(recs, list) else None
+        except (json.JSONDecodeError, KeyError):
+            logger.warning("AI cross-sell returned invalid JSON")
+            return None
+
+    def _ai_upsell(self, customer_id: str, customer_data: Dict[str, Any]) -> Optional[List[Dict]]:
+        """Use GPT-4o-mini to generate upsell recommendations."""
+        if not openai_available():
+            return None
+
+        summary = self._build_customer_summary(customer_id, customer_data)
+
+        messages = [
+            {"role": "system", "content": (
+                "You are an expert insurance sales analytics AI. "
+                "Analyze the customer's existing policies and recommend upgrades/enhancements. "
+                "Return a JSON object with key \"recommendations\" containing an array. "
+                "Each item: {\"policy_type\": str, \"current_coverage\": str, "
+                "\"recommended_coverage\": str, \"priority\": High|Medium|Low, "
+                "\"confidence\": 0.0-1.0, \"additional_premium\": number, "
+                "\"reasoning\": str, \"benefits\": [str], \"talking_points\": [str]}. "
+                "Return 1-3 recommendations. Return ONLY JSON."
+            )},
+            {"role": "user", "content": summary},
+        ]
+        raw = chat_completion(messages, temperature=0.6, max_tokens=900,
+                              response_format={"type": "json_object"})
+        if raw is None:
+            return None
+        try:
+            parsed = json.loads(raw)
+            recs = parsed.get("recommendations", parsed if isinstance(parsed, list) else [])
+            return recs if isinstance(recs, list) else None
+        except (json.JSONDecodeError, KeyError):
+            logger.warning("AI upsell returned invalid JSON")
+            return None
+
+    def _ai_talking_points(self, customer_id: str, customer_data: Dict[str, Any],
+                           context: str) -> Optional[Dict]:
+        """Use GPT-4o-mini to generate dynamic talking points."""
+        if not openai_available():
+            return None
+
+        summary = self._build_customer_summary(customer_id, customer_data)
+
+        messages = [
+            {"role": "system", "content": (
+                "You are an expert insurance sales coach AI. "
+                "Generate personalized talking points for an agent speaking with this customer. "
+                f"Conversation context: {context}.\n"
+                "Return a JSON object with: "
+                "\"greeting\" (personalized greeting), "
+                "\"relationship_highlights\" (array of 2-3 strings recognizing the customer's history), "
+                "\"conversation_starters\" (array of 3-4 context-appropriate openers), "
+                "\"key_facts\" (array of 3-5 data points the agent should know), "
+                "\"objection_handlers\" (array of 2-3 anticipated objection responses), "
+                "\"closing\" (strong closing statement). "
+                "Be warm, professional, and specific to this customer. Return ONLY JSON."
+            )},
+            {"role": "user", "content": summary},
+        ]
+        raw = chat_completion(messages, temperature=0.7, max_tokens=900,
+                              response_format={"type": "json_object"})
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("AI talking points returned invalid JSON")
+            return None
         
     def get_cross_sell_recommendations(
         self, 
         customer_id: str,
         customer_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Generate cross-sell recommendations for a customer
-        
-        Args:
-            customer_id: Customer ID
-            customer_data: Customer profile data
-            
-        Returns:
-            Dictionary containing cross-sell recommendations
+        """Generate cross-sell recommendations for a customer.
+
+        Uses GPT-4o-mini when available, falls back to rule-based logic.
         """
+        # --- Try AI-generated cross-sell first ---
+        ai_recs = self._ai_cross_sell(customer_id, customer_data)
+        if ai_recs:
+            return {
+                "customer_id": customer_id,
+                "customer_name": customer_data.get("name"),
+                "recommendation_count": len(ai_recs),
+                "recommendations": ai_recs,
+                "total_potential_revenue": sum(
+                    r.get("potential_premium", 0) for r in ai_recs
+                ),
+                "ai_generated": True,
+                "generated_at": datetime.now().isoformat()
+            }
+
+        # --- Rule-based fallback ---
         current_policies = {p["type"] for p in customer_data.get("policies", [])}
         recommendations = []
         
@@ -145,6 +289,7 @@ class SalesIntelligenceAgent:
             "recommendation_count": len(recommendations),
             "recommendations": recommendations,
             "total_potential_revenue": sum(r["potential_premium"] for r in recommendations),
+            "ai_generated": False,
             "generated_at": datetime.now().isoformat()
         }
         
@@ -153,15 +298,26 @@ class SalesIntelligenceAgent:
         customer_id: str,
         customer_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Generate up-sell recommendations for existing policies
-        
-        Args:
-            customer_id: Customer ID
-            customer_data: Customer profile data
-            
-        Returns:
-            Dictionary containing up-sell recommendations
+        """Generate up-sell recommendations for existing policies.
+
+        Uses GPT-4o-mini when available, falls back to rule-based logic.
         """
+        # --- Try AI-generated upsell first ---
+        ai_recs = self._ai_upsell(customer_id, customer_data)
+        if ai_recs:
+            return {
+                "customer_id": customer_id,
+                "customer_name": customer_data.get("name"),
+                "recommendation_count": len(ai_recs),
+                "recommendations": ai_recs,
+                "total_additional_revenue": sum(
+                    r.get("additional_premium", 0) for r in ai_recs
+                ),
+                "ai_generated": True,
+                "generated_at": datetime.now().isoformat()
+            }
+
+        # --- Rule-based fallback ---
         recommendations = []
         
         for policy in customer_data.get("policies", []):
@@ -217,6 +373,7 @@ class SalesIntelligenceAgent:
             "recommendation_count": len(recommendations),
             "recommendations": recommendations,
             "total_additional_revenue": sum(r["additional_premium"] for r in recommendations),
+            "ai_generated": False,
             "generated_at": datetime.now().isoformat()
         }
         
@@ -311,16 +468,22 @@ class SalesIntelligenceAgent:
         customer_data: Dict[str, Any],
         context: str = "general"
     ) -> Dict[str, Any]:
-        """Generate AI-powered talking points for customer interaction
-        
-        Args:
-            customer_id: Customer ID
-            customer_data: Customer profile data
-            context: Context for talking points (general, sales, retention, service)
-            
-        Returns:
-            Dictionary containing talking points and conversation starters
+        """Generate AI-powered talking points for customer interaction.
+
+        Uses GPT-4o-mini when available, falls back to rule-based templates.
         """
+        # --- Try AI-generated talking points first ---
+        ai_tp = self._ai_talking_points(customer_id, customer_data, context)
+        if ai_tp:
+            return {
+                "customer_id": customer_id,
+                "context": context,
+                "talking_points": ai_tp,
+                "ai_generated": True,
+                "generated_at": datetime.now().isoformat()
+            }
+
+        # --- Rule-based fallback ---
         talking_points = {
             "greeting": f"Hello {customer_data.get('name', 'valued customer')}! It's great to connect with you today.",
             "relationship_highlights": [],
@@ -377,6 +540,7 @@ class SalesIntelligenceAgent:
             "customer_id": customer_id,
             "context": context,
             "talking_points": talking_points,
+            "ai_generated": False,
             "generated_at": datetime.now().isoformat()
         }
         

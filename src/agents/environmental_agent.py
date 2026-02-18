@@ -13,6 +13,7 @@ import pandas as pd
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from utils.parquet_loader import get_external_signals
+from services.openai_service import chat_completion, is_available as openai_available
 
 
 class EnvironmentalAgent:
@@ -101,7 +102,7 @@ class EnvironmentalAgent:
             
             level, description = aqi_levels.get(aqi, ("Unknown", "Unable to determine air quality"))
             
-            return {
+            result = {
                 "location": location,
                 "coordinates": {"lat": lat, "lon": lon},
                 "air_quality_index": aqi,
@@ -119,6 +120,16 @@ class EnvironmentalAgent:
                 "source": "Azure Maps Air Quality API",
                 "timestamp": datetime.now().isoformat()
             }
+
+            # Enrich with AI-generated insurance impact analysis
+            ai_analysis = self._ai_environmental_analysis(result, "air_quality")
+            if ai_analysis:
+                result["ai_insurance_analysis"] = ai_analysis
+                result["ai_generated"] = True
+            else:
+                result["ai_generated"] = False
+
+            return result
             
         except Exception as e:
             return {"error": f"Failed to fetch pollution data: {str(e)}", "source": "Azure Maps Air Quality API"}
@@ -185,7 +196,7 @@ class EnvironmentalAgent:
                 }
             elif data.get("results"):
                 weather = data["results"][0]
-                return {
+                result = {
                     "region": region,
                     "coordinates": {"lat": lat, "lon": lon},
                     "timeframe": timeframe,
@@ -202,6 +213,16 @@ class EnvironmentalAgent:
                     "source": "Azure Maps Weather API",
                     "timestamp": datetime.now().isoformat()
                 }
+
+                # Enrich with AI analysis
+                ai_analysis = self._ai_environmental_analysis(result, "climate")
+                if ai_analysis:
+                    result["ai_insurance_analysis"] = ai_analysis
+                    result["ai_generated"] = True
+                else:
+                    result["ai_generated"] = False
+
+                return result
             else:
                 return {"error": "No climate data available", "source": "Azure Maps Weather API"}
             
@@ -236,6 +257,58 @@ class EnvironmentalAgent:
         except Exception as e:
             raise ValueError(f"Geocoding failed for {location}: {str(e)}")
     
+    # ---- Azure OpenAI helpers ------------------------------------------------
+
+    def _ai_environmental_analysis(self, data: Dict[str, Any], data_type: str) -> Optional[str]:
+        """Generate AI-powered insurance-relevant environmental risk analysis.
+
+        Args:
+            data: The environmental data dictionary.
+            data_type: Type of data (air_quality, climate).
+
+        Returns:
+            Analysis string, or None if AI is unavailable.
+        """
+        if not openai_available():
+            return None
+
+        try:
+            if data_type == "air_quality":
+                context = (
+                    f"Location: {data.get('location')}, "
+                    f"AQI: {data.get('air_quality_index')}, "
+                    f"Level: {data.get('level')}, "
+                    f"PM2.5: {data.get('pollution_levels', {}).get('pm2_5')}, "
+                    f"PM10: {data.get('pollution_levels', {}).get('pm10')}"
+                )
+            else:
+                context = (
+                    f"Region: {data.get('region')}, "
+                    f"Temp: {data.get('temperature')}{data.get('temperature_unit', 'C')}, "
+                    f"Humidity: {data.get('humidity')}%, "
+                    f"UV Index: {data.get('uv_index')}, "
+                    f"Wind: {data.get('wind', {}).get('speed')} km/h"
+                )
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an insurance underwriting environmental analyst. "
+                        "Given environmental data, provide a brief 2-3 sentence "
+                        "analysis of how these conditions impact property insurance "
+                        "risk, health liability, and premium considerations. "
+                        "Be specific and actionable. Do NOT use markdown."
+                    ),
+                },
+                {"role": "user", "content": context},
+            ]
+
+            return chat_completion(messages, temperature=0.4, max_tokens=200)
+        except Exception as e:
+            print(f"AI environmental analysis failed: {e}")
+            return None
+
     def _get_health_recommendations(self, aqi: int) -> str:
         """Get health recommendations based on Air Quality Index
         

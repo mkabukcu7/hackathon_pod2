@@ -1,7 +1,8 @@
 // Insurance Agent Dashboard JavaScript
 
-const API_BASE = 'http://localhost:8000';
+const API_BASE = window.location.origin;
 let currentCustomer = null;
+let currentCustomerData = null;
 
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', function() {
@@ -15,20 +16,32 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-// Load dashboard statistics
+// Load dashboard statistics from API
 async function loadDashboardStats() {
     try {
-        // Mock data for demo
-        document.getElementById('totalCustomers').textContent = '3';
-        document.getElementById('activeOpportunities').textContent = '12';
-        document.getElementById('aiInsights').textContent = '8';
-        document.getElementById('retentionScore').textContent = '89%';
+        const response = await fetch(`${API_BASE}/api/customers/stats`);
+        if (response.ok) {
+            const stats = await response.json();
+            document.getElementById('totalCustomers').textContent = Number(stats.total_customers).toLocaleString();
+            document.getElementById('activeOpportunities').textContent = Number(stats.active_policies).toLocaleString();
+            document.getElementById('aiInsights').textContent = Number(stats.total_claims).toLocaleString();
+            document.getElementById('retentionScore').textContent = `$${Number(stats.avg_premium).toLocaleString()}`;
+        } else {
+            document.getElementById('totalCustomers').textContent = '--';
+            document.getElementById('activeOpportunities').textContent = '--';
+            document.getElementById('aiInsights').textContent = '--';
+            document.getElementById('retentionScore').textContent = '--';
+        }
     } catch (error) {
         console.error('Error loading stats:', error);
+        document.getElementById('totalCustomers').textContent = '--';
+        document.getElementById('activeOpportunities').textContent = '--';
+        document.getElementById('aiInsights').textContent = '--';
+        document.getElementById('retentionScore').textContent = '--';
     }
 }
 
-// Search for customer
+// Search for customer via API
 async function searchCustomer() {
     const query = document.getElementById('customerSearch').value.trim();
     if (!query) return;
@@ -37,13 +50,18 @@ async function searchCustomer() {
     resultsDiv.innerHTML = '<div class="loading">Searching...</div>';
     
     try {
-        // Try mock search first
-        const mockResults = searchMockCustomers(query);
+        const response = await fetch(`${API_BASE}/api/customers/search?query=${encodeURIComponent(query)}&limit=50`);
         
-        if (mockResults.length > 0) {
-            displaySearchResults(mockResults);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.results && data.results.length > 0) {
+            displaySearchResults(data.results, data.count);
         } else {
-            resultsDiv.innerHTML = '<p>No customers found. Try "Sarah", "Michael", or "Jennifer"</p>';
+            resultsDiv.innerHTML = '<p>No customers found. Try a customer ID (e.g. "C0052225"), state (e.g. "NC"), or region (e.g. "Southeast").</p>';
         }
     } catch (error) {
         console.error('Error searching:', error);
@@ -51,24 +69,8 @@ async function searchCustomer() {
     }
 }
 
-// Mock customer search (when API is not available)
-function searchMockCustomers(query) {
-    const mockCustomers = [
-        { id: 'C001', name: 'Sarah Johnson', email: 'sarah.johnson@email.com', type: 'Premium', policy_count: 2, lifetime_value: 45000 },
-        { id: 'C002', name: 'Michael Chen', email: 'm.chen@techcorp.com', type: 'Standard', policy_count: 1, lifetime_value: 8500 },
-        { id: 'C003', name: 'Jennifer Martinez', email: 'jmartinez@consulting.com', type: 'Premium', policy_count: 3, lifetime_value: 125000 }
-    ];
-    
-    const queryLower = query.toLowerCase();
-    return mockCustomers.filter(c => 
-        c.name.toLowerCase().includes(queryLower) ||
-        c.email.toLowerCase().includes(queryLower) ||
-        c.id.toLowerCase().includes(queryLower)
-    );
-}
-
 // Display search results
-function displaySearchResults(results) {
+function displaySearchResults(results, totalCount) {
     const resultsDiv = document.getElementById('searchResults');
     
     if (results.length === 0) {
@@ -76,13 +78,15 @@ function displaySearchResults(results) {
         return;
     }
     
-    let html = '<h3>Search Results</h3>';
+    let html = `<h3>Search Results (${totalCount} found)</h3>`;
     results.forEach(customer => {
+        const ltv = typeof customer.lifetime_value === 'number' ? customer.lifetime_value.toLocaleString() : customer.lifetime_value;
+        const location = [customer.state, customer.region].filter(Boolean).join(', ');
         html += `
             <div class="result-item" onclick='selectCustomer("${customer.id}")'>
-                <strong>${customer.name}</strong> (${customer.id})
+                <strong>${customer.name || customer.id}</strong> (${customer.id})
                 <br>
-                <small>${customer.email} • ${customer.type} • ${customer.policy_count} policies • $${customer.lifetime_value.toLocaleString()} LTV</small>
+                <small>${location ? location + ' • ' : ''}${customer.type} • ${customer.policy_count} policies • $${ltv} premium</small>
             </div>
         `;
     });
@@ -98,23 +102,30 @@ async function selectCustomer(customerId) {
     document.getElementById('customerProfile').style.display = 'block';
     document.getElementById('customerProfile').scrollIntoView({ behavior: 'smooth' });
     
-    // Load customer data
+    // Load customer data from API
     await loadCustomerProfile(customerId);
 }
 
-// Load customer profile
+// Load customer profile from API
 async function loadCustomerProfile(customerId) {
     try {
-        // Load mock customer data
-        const customer = getMockCustomer(customerId);
+        const response = await fetch(`${API_BASE}/api/customers/${encodeURIComponent(customerId)}`);
         
-        if (!customer) {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const customer = await response.json();
+        
+        if (customer.error) {
             alert('Customer not found');
             return;
         }
         
+        currentCustomerData = customer;
+        
         // Update header
-        document.getElementById('customerName').textContent = customer.name;
+        document.getElementById('customerName').textContent = customer.name || customer.id;
         const typeClass = customer.type === 'Premium' ? 'badge-premium' : 'badge-standard';
         document.getElementById('customerType').className = `badge ${typeClass}`;
         document.getElementById('customerType').textContent = customer.type;
@@ -124,83 +135,35 @@ async function loadCustomerProfile(customerId) {
         loadPoliciesTab(customer);
     } catch (error) {
         console.error('Error loading customer profile:', error);
+        alert('Error loading customer profile. Please try again.');
     }
-}
-
-// Get mock customer data
-function getMockCustomer(customerId) {
-    const mockData = {
-        'C001': {
-            id: 'C001',
-            name: 'Sarah Johnson',
-            email: 'sarah.johnson@email.com',
-            phone: '+1-555-0101',
-            zip: '90001',
-            type: 'Premium',
-            status: 'Active',
-            join_date: '2020-03-15',
-            policies: [
-                { policy_number: 'AUTO-2020-001', type: 'Auto Insurance', premium: 1250, status: 'Active', coverage: 'Standard' },
-                { policy_number: 'HOME-2021-045', type: 'Home Insurance', premium: 1800, status: 'Active', coverage: 'Premium' }
-            ],
-            lifetime_value: 45000,
-            satisfaction_score: 4.5,
-            risk_score: 0.25
-        },
-        'C002': {
-            id: 'C002',
-            name: 'Michael Chen',
-            email: 'm.chen@techcorp.com',
-            phone: '+1-555-0202',
-            zip: '33101',
-            type: 'Standard',
-            status: 'Active',
-            join_date: '2022-08-10',
-            policies: [
-                { policy_number: 'AUTO-2022-089', type: 'Auto Insurance', premium: 980, status: 'Active', coverage: 'Standard' }
-            ],
-            lifetime_value: 8500,
-            satisfaction_score: 4.2,
-            risk_score: 0.15
-        },
-        'C003': {
-            id: 'C003',
-            name: 'Jennifer Martinez',
-            email: 'jmartinez@consulting.com',
-            phone: '+1-555-0303',
-            zip: '94102',
-            type: 'Premium',
-            status: 'Active',
-            join_date: '2019-01-20',
-            policies: [
-                { policy_number: 'HOME-2019-012', type: 'Home Insurance', premium: 2200, status: 'Active', coverage: 'Premium Plus' },
-                { policy_number: 'AUTO-2019-013', type: 'Auto Insurance', premium: 1400, status: 'Active', coverage: 'Comprehensive' },
-                { policy_number: 'LIFE-2020-078', type: 'Life Insurance', premium: 3200, status: 'Active', coverage: 'Term Life - 500K' }
-            ],
-            lifetime_value: 125000,
-            satisfaction_score: 4.8,
-            risk_score: 0.10
-        }
-    };
-    
-    return mockData[customerId];
 }
 
 // Load overview tab
 function loadOverviewTab(customer) {
     const infoHtml = `
         <p><strong>Customer ID:</strong> ${customer.id}</p>
-        <p><strong>Email:</strong> ${customer.email}</p>
-        <p><strong>Phone:</strong> ${customer.phone}</p>
+        <p><strong>State:</strong> ${customer.state || 'N/A'}</p>
+        <p><strong>Region:</strong> ${customer.region || 'N/A'}</p>
         <p><strong>ZIP Code:</strong> ${customer.zip || 'N/A'}</p>
+        <p><strong>Age:</strong> ${customer.age || 'N/A'}</p>
+        <p><strong>Marital Status:</strong> ${customer.marital_status || 'N/A'}</p>
+        <p><strong>Income Band:</strong> ${customer.income_band || 'N/A'}</p>
+        <p><strong>Homeowner:</strong> ${customer.is_homeowner ? 'Yes' : 'No'}</p>
+        <p><strong>Has Kids:</strong> ${customer.has_kids ? 'Yes' : 'No'}</p>
         <p><strong>Status:</strong> ${customer.status}</p>
-        <p><strong>Member Since:</strong> ${customer.join_date}</p>
-        <p><strong>Lifetime Value:</strong> $${customer.lifetime_value.toLocaleString()}</p>
-        <p><strong>Satisfaction:</strong> ${customer.satisfaction_score}/5.0 ⭐</p>
-        <p><strong>Risk Score:</strong> ${(customer.risk_score * 100).toFixed(0)}%</p>
+        <p><strong>Total Premium:</strong> $${(customer.lifetime_value || 0).toLocaleString()}</p>
+        <p><strong>Policies:</strong> ${(customer.policies || []).length}</p>
+        <p><strong>Claims:</strong> ${(customer.claim_history || []).length}</p>
+        <p><strong>Satisfaction:</strong> ${customer.satisfaction_score || 'N/A'}/5.0 ⭐</p>
+        <p><strong>Risk Score:</strong> ${customer.risk_score != null ? (customer.risk_score * 100).toFixed(0) + '%' : 'N/A'}</p>
+        <p><strong>Data Source:</strong> ${customer.data_source || 'unknown'}</p>
     `;
     
     document.getElementById('customerInfo').innerHTML = infoHtml;
+    
+    // Load weather for customer location
+    loadCustomerWeather(customer);
     
     // Load hazard risk if ZIP is available
     if (customer.zip) {
@@ -209,195 +172,460 @@ function loadOverviewTab(customer) {
     
     const activityHtml = `
         <div class="insight-card">
-            <div class="insight-icon">📞</div>
-            <div class="insight-title">Last Contact</div>
-            <div class="insight-description">2 weeks ago - Policy review call</div>
+            <div class="insight-icon">📋</div>
+            <div class="insight-title">Policies</div>
+            <div class="insight-description">${(customer.policies || []).length} active policies</div>
         </div>
         <div class="insight-card">
-            <div class="insight-icon">✅</div>
-            <div class="insight-title">Recent Payment</div>
-            <div class="insight-description">Auto insurance premium - On time</div>
+            <div class="insight-icon">📄</div>
+            <div class="insight-title">Claims</div>
+            <div class="insight-description">${(customer.claim_history || []).length} claims on file</div>
         </div>
     `;
     
     document.getElementById('recentActivity').innerHTML = activityHtml;
 }
 
-// Load policies tab
-function loadPoliciesTab(customer) {
-    let html = '<h3>Active Policies</h3>';
+// Load current weather for customer's location
+async function loadCustomerWeather(customer) {
+    const weatherSection = document.getElementById('weatherSection');
+    const weatherContent = document.getElementById('weatherContent');
     
-    customer.policies.forEach(policy => {
+    // Determine location from state or zip
+    const location = customer.state || customer.region;
+    if (!location) {
+        weatherSection.style.display = 'none';
+        return;
+    }
+    
+    weatherSection.style.display = 'block';
+    weatherContent.innerHTML = '<div class="loading" style="padding: 15px;">Loading weather data...</div>';
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/weather/current?location=${encodeURIComponent(location)}&units=imperial`);
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        
+        if (data.error) {
+            weatherContent.innerHTML = `<p style="color: #999;">Weather data unavailable: ${data.error}</p>`;
+            return;
+        }
+        
+        let html = '<div class="weather-grid">';
+        
+        // Temperature
+        const temp = data.temperature?.value ?? data.temperature ?? '--';
+        const feelsLike = data.feels_like?.value ?? data.feels_like ?? '';
         html += `
-            <div class="info-card">
-                <h4>${policy.type}</h4>
-                <p><strong>Policy #:</strong> ${policy.policy_number}</p>
-                <p><strong>Premium:</strong> $${policy.premium.toLocaleString()}/year</p>
-                <p><strong>Status:</strong> ${policy.status}</p>
+            <div class="weather-metric">
+                <div class="metric-icon">🌡️</div>
+                <div class="metric-value">${typeof temp === 'number' ? Math.round(temp) + '°F' : temp}</div>
+                <div class="metric-label">Temperature${feelsLike ? ` (Feels ${typeof feelsLike === 'number' ? Math.round(feelsLike) + '°F' : feelsLike})` : ''}</div>
             </div>
         `;
-    });
+        
+        // Conditions
+        const conditions = data.conditions || data.description || data.weather_description || '--';
+        html += `
+            <div class="weather-metric">
+                <div class="metric-icon">${getWeatherIcon(conditions)}</div>
+                <div class="metric-value" style="font-size: 1.2em;">${conditions}</div>
+                <div class="metric-label">Conditions</div>
+            </div>
+        `;
+        
+        // Humidity
+        const humidity = data.humidity?.value ?? data.humidity ?? '--';
+        html += `
+            <div class="weather-metric">
+                <div class="metric-icon">💧</div>
+                <div class="metric-value">${typeof humidity === 'number' ? humidity + '%' : humidity}</div>
+                <div class="metric-label">Humidity</div>
+            </div>
+        `;
+        
+        // Wind
+        const windSpeed = data.wind?.speed?.value ?? data.wind_speed ?? data.wind?.speed ?? '--';
+        html += `
+            <div class="weather-metric">
+                <div class="metric-icon">💨</div>
+                <div class="metric-value">${typeof windSpeed === 'number' ? Math.round(windSpeed) + ' mph' : windSpeed}</div>
+                <div class="metric-label">Wind Speed</div>
+            </div>
+        `;
+        
+        html += '</div>';
+        
+        // AI narrative if available
+        if (data.ai_insurance_narrative) {
+            html += `
+                <div class="weather-ai-narrative">
+                    <h4>🤖 AI Insurance Weather Analysis</h4>
+                    ${formatAIText(data.ai_insurance_narrative)}
+                </div>
+            `;
+        }
+        
+        // Timestamp
+        if (data.retrieved_at) {
+            html += `<div class="weather-timestamp">Updated: ${new Date(data.retrieved_at).toLocaleString()}</div>`;
+        }
+        
+        weatherContent.innerHTML = html;
+    } catch (error) {
+        console.error('Error loading weather:', error);
+        weatherContent.innerHTML = '<p style="color: #999;">Unable to load weather data for this location.</p>';
+    }
+}
+
+// Get weather icon based on conditions text
+function getWeatherIcon(conditions) {
+    if (!conditions) return '🌤️';
+    const c = conditions.toLowerCase();
+    if (c.includes('rain') || c.includes('drizzle')) return '🌧️';
+    if (c.includes('snow') || c.includes('sleet')) return '🌨️';
+    if (c.includes('thunder') || c.includes('storm')) return '⛈️';
+    if (c.includes('cloud') || c.includes('overcast')) return '☁️';
+    if (c.includes('fog') || c.includes('mist') || c.includes('haze')) return '🌫️';
+    if (c.includes('clear') || c.includes('sunny')) return '☀️';
+    if (c.includes('partly')) return '⛅';
+    if (c.includes('wind')) return '💨';
+    return '🌤️';
+}
+
+// Format AI-generated text: convert raw strings with newlines, bullets, dashes into clean HTML
+function formatAIText(text) {
+    if (!text) return '';
+    if (typeof text !== 'string') {
+        // If it's an object/array, render it nicely
+        if (Array.isArray(text)) {
+            return '<ul>' + text.map(item => `<li>${formatAIText(item)}</li>`).join('') + '</ul>';
+        }
+        if (typeof text === 'object') {
+            let html = '';
+            for (const [key, value] of Object.entries(text)) {
+                html += `<p><strong>${formatLabel(key)}:</strong> ${typeof value === 'object' ? formatAIText(value) : value}</p>`;
+            }
+            return html;
+        }
+        return String(text);
+    }
     
-    const totalPremium = customer.policies.reduce((sum, p) => sum + p.premium, 0);
-    html += `<p style="margin-top: 20px;"><strong>Total Annual Premium:</strong> $${totalPremium.toLocaleString()}</p>`;
+    // Split by newlines and process each line
+    const lines = text.split(/\n/).map(l => l.trim()).filter(l => l.length > 0);
+    
+    let html = '';
+    let inList = false;
+    
+    for (const line of lines) {
+        // Check if this line is a bullet/dash/numbered item
+        const bulletMatch = line.match(/^[\-\*•→]\s*(.*)/) || line.match(/^\d+[\.\)]\s*(.*)/);
+        
+        if (bulletMatch) {
+            if (!inList) { html += '<ul>'; inList = true; }
+            html += `<li>${bulletMatch[1]}</li>`;
+        } else {
+            if (inList) { html += '</ul>'; inList = false; }
+            // Check if it looks like a section header (ends with colon or is all caps/title case and short)
+            if (line.endsWith(':') && line.length < 60) {
+                html += `<strong>${line}</strong>`;
+            } else {
+                html += `<p>${line}</p>`;
+            }
+        }
+    }
+    if (inList) html += '</ul>';
+    
+    return html;
+}
+
+// Format an AI response object into readable HTML sections
+function formatAIResponse(data, excludeKeys = []) {
+    const skip = new Set(['customer_id', 'retrieved_at', 'generated_at', 'ai_generated', 'context', ...excludeKeys]);
+    let html = '';
+    
+    for (const [key, value] of Object.entries(data)) {
+        if (skip.has(key)) continue;
+        
+        if (Array.isArray(value)) {
+            html += `<div class="ai-section"><h4>${formatLabel(key)}</h4>`;
+            if (value.length === 0) {
+                html += '<p>None available</p>';
+            } else if (typeof value[0] === 'string') {
+                html += '<ul>' + value.map(v => `<li>${v}</li>`).join('') + '</ul>';
+            } else if (typeof value[0] === 'object') {
+                // Array of objects - render each as a card
+                value.forEach(item => {
+                    html += '<div class="info-card">';
+                    for (const [k, v] of Object.entries(item)) {
+                        if (Array.isArray(v)) {
+                            html += `<p><strong>${formatLabel(k)}:</strong></p><ul>${v.map(x => `<li>${x}</li>`).join('')}</ul>`;
+                        } else {
+                            html += `<p><strong>${formatLabel(k)}:</strong> ${v}</p>`;
+                        }
+                    }
+                    html += '</div>';
+                });
+            }
+            html += '</div>';
+        } else if (typeof value === 'object' && value !== null) {
+            html += `<div class="ai-section"><h4>${formatLabel(key)}</h4>`;
+            for (const [k, v] of Object.entries(value)) {
+                if (Array.isArray(v)) {
+                    html += `<p><strong>${formatLabel(k)}:</strong></p><ul>${v.map(x => `<li>${typeof x === 'object' ? JSON.stringify(x) : x}</li>`).join('')}</ul>`;
+                } else if (typeof v === 'object' && v !== null) {
+                    html += `<p><strong>${formatLabel(k)}:</strong></p>`;
+                    for (const [kk, vv] of Object.entries(v)) {
+                        html += `<p style="margin-left: 15px;">• <strong>${formatLabel(kk)}:</strong> ${vv}</p>`;
+                    }
+                } else {
+                    html += `<p><strong>${formatLabel(k)}:</strong> ${v}</p>`;
+                }
+            }
+            html += '</div>';
+        } else if (typeof value === 'string' && value.length > 80) {
+            // Long text — format it nicely
+            html += `<div class="ai-section"><h4>${formatLabel(key)}</h4>${formatAIText(value)}</div>`;
+        } else {
+            html += `<div class="ai-section"><p><strong>${formatLabel(key)}:</strong> ${value}</p></div>`;
+        }
+    }
+    
+    return html;
+}
+
+// Load policies tab
+function loadPoliciesTab(customer) {
+    const policies = customer.policies || [];
+    let html = `<h3>Active Policies (${policies.length})</h3>`;
+    
+    if (policies.length === 0) {
+        html += '<p>No policies found for this customer.</p>';
+    } else {
+        policies.forEach(policy => {
+            html += `
+                <div class="info-card">
+                    <h4>${policy.type}</h4>
+                    <p><strong>Policy #:</strong> ${policy.policy_number}</p>
+                    <p><strong>Premium:</strong> $${policy.premium.toLocaleString()}/year</p>
+                    <p><strong>Status:</strong> ${policy.status}</p>
+                    <p><strong>Coverage:</strong> ${policy.coverage || 'Standard'}</p>
+                    ${policy.effective_date ? `<p><strong>Effective:</strong> ${policy.effective_date}</p>` : ''}
+                    ${policy.expiration_date ? `<p><strong>Expires:</strong> ${policy.expiration_date}</p>` : ''}
+                </div>
+            `;
+        });
+        
+        const totalPremium = policies.reduce((sum, p) => sum + (p.premium || 0), 0);
+        html += `<p style="margin-top: 20px;"><strong>Total Annual Premium:</strong> $${totalPremium.toLocaleString()}</p>`;
+    }
     
     document.getElementById('policiesList').innerHTML = html;
 }
 
-// Show cross-sell opportunities
-function showCrossSell() {
+// Show cross-sell opportunities (from API)
+async function showCrossSell() {
     const panel = document.getElementById('insightsPanel');
     document.getElementById('panelTitle').textContent = '💰 Cross-Sell Opportunities';
-    
-    let html = '<h3>AI-Generated Recommendations</h3>';
-    
-    const customer = getMockCustomer(currentCustomer);
-    const hasPolicies = customer.policies.map(p => p.type);
-    
-    if (!hasPolicies.includes('Life Insurance')) {
-        html += `
-            <div class="recommendation-card">
-                <div class="recommendation-header">
-                    <h4>Life Insurance</h4>
-                    <span class="priority-badge priority-high">High Priority</span>
-                </div>
-                <p><strong>Confidence:</strong> 85%</p>
-                <p><strong>Potential Premium:</strong> $2,800/year</p>
-                <p><strong>Bundle Discount:</strong> 10%</p>
-                <p><strong>Reasoning:</strong> Multi-policy customer with high lifetime value; good candidate for life insurance</p>
-                <h5>Talking Points:</h5>
-                <ul>
-                    <li>As a valued multi-policy customer, you qualify for preferred rates</li>
-                    <li>Protect your family's future with term life coverage</li>
-                    <li>Additional 10% discount when bundled</li>
-                </ul>
-                <button class="btn btn-success" style="margin-top: 10px;">Generate Quote</button>
-            </div>
-        `;
-    }
-    
-    html += `
-        <div class="recommendation-card">
-            <div class="recommendation-header">
-                <h4>Umbrella Liability Insurance</h4>
-                <span class="priority-badge priority-medium">Medium Priority</span>
-            </div>
-            <p><strong>Confidence:</strong> 65%</p>
-            <p><strong>Potential Premium:</strong> $450/year</p>
-            <p><strong>Reasoning:</strong> Customer has property insurance; umbrella coverage provides extra protection</p>
-            <h5>Talking Points:</h5>
-            <ul>
-                <li>Protect yourself from major liability claims beyond standard limits</li>
-                <li>Affordable extra layer of protection for just $450/year</li>
-                <li>Peace of mind with $1M to $5M in additional coverage</li>
-            </ul>
-            <button class="btn btn-success" style="margin-top: 10px;">Generate Quote</button>
-        </div>
-    `;
-    
-    document.getElementById('panelContent').innerHTML = html;
+    document.getElementById('panelContent').innerHTML = '<div class="loading">Loading recommendations...</div>';
     panel.classList.add('open');
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/customers/${encodeURIComponent(currentCustomer)}/cross-sell`);
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        let html = '<h3>Cross-Sell Recommendations';
+        if (data.ai_generated) html += ' <span class="ai-badge">🤖 AI Generated</span>';
+        html += '</h3>';
+        
+        if (data.total_potential_revenue || data.total_additional_revenue) {
+            const rev = data.total_potential_revenue || data.total_additional_revenue || 0;
+            html += `<p style="margin-bottom: 15px; font-size: 1.1em;">💰 <strong>Total Revenue Potential:</strong> $${Number(rev).toLocaleString()}/year</p>`;
+        }
+        
+        const recommendations = data.recommendations || data.opportunities || [];
+        if (recommendations.length === 0 && typeof data === 'object') {
+            html += formatAIResponse(data);
+        } else {
+            recommendations.forEach(rec => {
+                html += `
+                    <div class="recommendation-card">
+                        <div class="recommendation-header">
+                            <h4>${rec.product || rec.name || rec.type || 'Recommendation'}</h4>
+                            <span class="priority-badge priority-${(rec.priority || 'medium').toLowerCase()}">${rec.priority || 'Medium'}</span>
+                        </div>
+                        ${rec.confidence ? `<p><strong>Confidence:</strong> ${typeof rec.confidence === 'number' && rec.confidence <= 1 ? (rec.confidence * 100).toFixed(0) : rec.confidence}%</p>` : ''}
+                        ${rec.potential_premium ? `<p><strong>Potential Premium:</strong> $${Number(rec.potential_premium).toLocaleString()}/year</p>` : ''}
+                        ${rec.bundle_discount ? `<p><strong>Bundle Discount:</strong> ${rec.bundle_discount}% off</p>` : ''}
+                        ${rec.reasoning ? `<p><strong>Reasoning:</strong> ${rec.reasoning}</p>` : ''}
+                        ${rec.talking_points && rec.talking_points.length > 0 ? `<h5 style="margin-top: 10px;">Talking Points:</h5><ul>${rec.talking_points.map(t => `<li>${t}</li>`).join('')}</ul>` : ''}
+                        <button class="btn btn-success" style="margin-top: 10px;">Generate Quote</button>
+                    </div>
+                `;
+            });
+        }
+        
+        document.getElementById('panelContent').innerHTML = html;
+    } catch (error) {
+        console.error('Error loading cross-sell:', error);
+        document.getElementById('panelContent').innerHTML = '<p style="color: red;">Error loading recommendations.</p>';
+    }
 }
 
-// Show up-sell options
-function showUpSell() {
+// Show up-sell options (from API)
+async function showUpSell() {
     const panel = document.getElementById('insightsPanel');
     document.getElementById('panelTitle').textContent = '📈 Up-Sell Opportunities';
-    
-    let html = '<h3>Policy Enhancement Options</h3>';
-    
-    html += `
-        <div class="recommendation-card">
-            <div class="recommendation-header">
-                <h4>Upgrade to Comprehensive Coverage</h4>
-                <span class="priority-badge priority-high">High Priority</span>
-            </div>
-            <p><strong>Current Coverage:</strong> Standard</p>
-            <p><strong>Recommended:</strong> Comprehensive</p>
-            <p><strong>Additional Premium:</strong> +$350/year</p>
-            <h5>Benefits:</h5>
-            <ul>
-                <li>Lower deductible: $250 vs $500</li>
-                <li>Rental car coverage included</li>
-                <li>Roadside assistance 24/7</li>
-                <li>New car replacement within first 2 years</li>
-            </ul>
-            <h5>Talking Points:</h5>
-            <ul>
-                <li>Your excellent record qualifies you for our best rates</li>
-                <li>Upgrade for just $29/month more</li>
-                <li>Enhanced protection with lower out-of-pocket costs</li>
-            </ul>
-            <button class="btn btn-info" style="margin-top: 10px;">Present Upgrade</button>
-        </div>
-    `;
-    
-    document.getElementById('panelContent').innerHTML = html;
+    document.getElementById('panelContent').innerHTML = '<div class="loading">Loading upgrade options...</div>';
     panel.classList.add('open');
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/customers/${encodeURIComponent(currentCustomer)}/upsell`);
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        let html = '<h3>Policy Enhancement Options';
+        if (data.ai_generated) html += ' <span class="ai-badge">🤖 AI Generated</span>';
+        html += '</h3>';
+        
+        if (data.total_additional_revenue) {
+            html += `<p style="margin-bottom: 15px; font-size: 1.1em;">📈 <strong>Total Additional Revenue:</strong> +$${Number(data.total_additional_revenue).toLocaleString()}/year</p>`;
+        }
+        
+        const recommendations = data.recommendations || data.opportunities || [];
+        if (recommendations.length === 0 && typeof data === 'object') {
+            html += formatAIResponse(data);
+        } else {
+            recommendations.forEach(rec => {
+                html += `
+                    <div class="recommendation-card">
+                        <div class="recommendation-header">
+                            <h4>${rec.product || rec.policy_type || rec.name || rec.type || 'Upgrade Option'}</h4>
+                            <span class="priority-badge priority-${(rec.priority || 'medium').toLowerCase()}">${rec.priority || 'Medium'}</span>
+                        </div>
+                        ${rec.current_coverage ? `<p><strong>Current:</strong> ${rec.current_coverage}</p>` : ''}
+                        ${rec.recommended_coverage || rec.recommended ? `<p><strong>Recommended:</strong> ${rec.recommended_coverage || rec.recommended}</p>` : ''}
+                        ${rec.confidence ? `<p><strong>Confidence:</strong> ${typeof rec.confidence === 'number' && rec.confidence <= 1 ? (rec.confidence * 100).toFixed(0) : rec.confidence}%</p>` : ''}
+                        ${rec.additional_premium ? `<p><strong>Additional Premium:</strong> +$${Number(rec.additional_premium).toLocaleString()}/year</p>` : ''}
+                        ${rec.reasoning ? `<p><strong>Reasoning:</strong> ${rec.reasoning}</p>` : ''}
+                        ${rec.benefits && rec.benefits.length > 0 ? `<h5 style="margin-top: 10px;">Benefits:</h5><ul>${rec.benefits.map(b => `<li>${b}</li>`).join('')}</ul>` : ''}
+                        ${rec.talking_points && rec.talking_points.length > 0 ? `<h5 style="margin-top: 10px;">Talking Points:</h5><ul>${rec.talking_points.map(t => `<li>${t}</li>`).join('')}</ul>` : ''}
+                        <button class="btn btn-info" style="margin-top: 10px;">Present Upgrade</button>
+                    </div>
+                `;
+            });
+        }
+        
+        document.getElementById('panelContent').innerHTML = html;
+    } catch (error) {
+        console.error('Error loading upsell:', error);
+        document.getElementById('panelContent').innerHTML = '<p style="color: red;">Error loading upgrade options.</p>';
+    }
 }
 
-// Show customer insights
-function showInsights() {
+// Show customer insights (from API)
+async function showInsights() {
     const panel = document.getElementById('insightsPanel');
     document.getElementById('panelTitle').textContent = '💡 Customer Insights & Trends';
-    
-    const customer = getMockCustomer(currentCustomer);
-    
-    let html = '<h3>Real-Time AI Insights</h3>';
-    
-    if (customer.satisfaction_score >= 4.5) {
-        html += `
-            <div class="insight-card">
-                <div class="insight-icon">🌟</div>
-                <div class="insight-title">Highly Satisfied Customer</div>
-                <div class="insight-description">Customer satisfaction score: ${customer.satisfaction_score}/5.0 - Among top 20% of customers</div>
-                <div class="insight-action">Action: Opportunity for testimonial or referral program</div>
-            </div>
-        `;
-    }
-    
-    if (customer.policies.length >= 3) {
-        html += `
-            <div class="insight-card">
-                <div class="insight-icon">🎯</div>
-                <div class="insight-title">Multi-Product Customer</div>
-                <div class="insight-description">${customer.policies.length} active policies - High engagement and loyalty</div>
-                <div class="insight-action">Action: VIP treatment and exclusive offers</div>
-            </div>
-        `;
-    }
-    
-    if (customer.lifetime_value > 50000) {
-        html += `
-            <div class="insight-card">
-                <div class="insight-icon">💎</div>
-                <div class="insight-title">High-Value Customer</div>
-                <div class="insight-description">Lifetime value: $${customer.lifetime_value.toLocaleString()} - Top tier customer</div>
-                <div class="insight-action">Action: Prioritize with white-glove service</div>
-            </div>
-        `;
-    }
-    
-    html += `
-        <div class="insight-card">
-            <div class="insight-icon">✅</div>
-            <div class="insight-title">Excellent Claims History</div>
-            <div class="insight-description">No recent claims - Perfect candidate for loyalty rewards</div>
-            <div class="insight-action">Action: Offer claims-free discount or policy upgrade</div>
-        </div>
-    `;
-    
-    html += '<h3 style="margin-top: 30px;">Customer Trends</h3>';
-    html += `
-        <p><strong>Retention Score:</strong> 92/100 ✅</p>
-        <p><strong>Engagement Trend:</strong> Stable 📊</p>
-        <p><strong>Premium Trend:</strong> Increasing 📈</p>
-        <p><strong>Satisfaction Trend:</strong> Improving 🎯</p>
-        <p><strong>Churn Risk:</strong> Low (8%) 💚</p>
-    `;
-    
-    document.getElementById('panelContent').innerHTML = html;
+    document.getElementById('panelContent').innerHTML = '<div class="loading">Loading insights...</div>';
     panel.classList.add('open');
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/customers/${encodeURIComponent(currentCustomer)}/insights`);
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        let html = '<h3>AI-Powered Insights';
+        if (data.ai_generated) html += ' <span class="ai-badge">🤖 AI Generated</span>';
+        html += '</h3>';
+        
+        const insights = data.insights || [];
+        if (insights.length > 0 && typeof insights[0] === 'object' && insights[0].title) {
+            // Structured insight objects with title/description/action
+            insights.forEach(insight => {
+                const icon = insight.icon || '💡';
+                html += `
+                    <div class="insight-card">
+                        <div class="insight-icon">${icon}</div>
+                        <div class="insight-title">${insight.title || insight.category || 'Insight'}</div>
+                        <div class="insight-description">${insight.description || ''}</div>
+                        ${insight.action ? `<div class="insight-action"><strong>Action:</strong> ${insight.action}</div>` : ''}
+                    </div>
+                `;
+            });
+        } else if (insights.length > 0) {
+            // Array of strings or simpler objects
+            insights.forEach(insight => {
+                html += `<div class="insight-card"><div class="insight-description">${typeof insight === 'string' ? insight : formatAIText(JSON.stringify(insight))}</div></div>`;
+            });
+        } else {
+            // Fallback: format the entire response nicely
+            html += formatAIResponse(data);
+        }
+        
+        // Overall health if present
+        if (data.overall_health) {
+            const h = data.overall_health;
+            html += `<div class="ai-section" style="margin-top: 20px;">
+                <h4>Overall Health Score</h4>
+                <p style="font-size: 1.4em; font-weight: bold; color: ${h.color || '#333'};">
+                    ${h.score}/100 — ${h.rating}
+                </p>
+            </div>`;
+        }
+        
+        // Load trends
+        try {
+            const trendsResponse = await fetch(`${API_BASE}/api/customers/${encodeURIComponent(currentCustomer)}/trends`);
+            if (trendsResponse.ok) {
+                const trends = await trendsResponse.json();
+                html += '<h3 style="margin-top: 30px;">📈 Customer Trends';
+                if (trends.ai_generated) html += ' <span class="ai-badge">🤖 AI Generated</span>';
+                html += '</h3>';
+                
+                // Key observations
+                if (trends.key_observations && trends.key_observations.length > 0) {
+                    html += '<div class="ai-section"><h4>Key Observations</h4><ul>';
+                    trends.key_observations.forEach(obs => { html += `<li>${obs}</li>`; });
+                    html += '</ul></div>';
+                }
+                
+                // Trends
+                if (trends.trends && typeof trends.trends === 'object') {
+                    html += '<div class="ai-section"><h4>Trend Summary</h4>';
+                    for (const [key, value] of Object.entries(trends.trends)) {
+                        const icon = value === 'increasing' || value === 'improving' ? '📈' :
+                                     value === 'decreasing' ? '📉' : '➡️';
+                        html += `<p>${icon} <strong>${formatLabel(key)}:</strong> ${formatLabel(String(value))}</p>`;
+                    }
+                    html += '</div>';
+                }
+                
+                // Predictions
+                if (trends.predictions && typeof trends.predictions === 'object') {
+                    html += '<div class="ai-section"><h4>Predictions</h4>';
+                    for (const [key, value] of Object.entries(trends.predictions)) {
+                        const display = typeof value === 'number' && value <= 1 ? (value * 100).toFixed(0) + '%' : value;
+                        html += `<p><strong>${formatLabel(key)}:</strong> ${display}</p>`;
+                    }
+                    html += '</div>';
+                }
+            }
+        } catch (e) {
+            console.warn('Could not load trends:', e);
+        }
+        
+        document.getElementById('panelContent').innerHTML = html;
+    } catch (error) {
+        console.error('Error loading insights:', error);
+        document.getElementById('panelContent').innerHTML = '<p style="color: red;">Error loading insights.</p>';
+    }
 }
 
 // Helper function to calculate years since a date
@@ -408,58 +636,85 @@ function calculateYearsSince(dateString) {
     return ((now - date) / MS_PER_YEAR).toFixed(1);
 }
 
-// Show talking points
-function showTalkingPoints() {
+// Show talking points (from API)
+async function showTalkingPoints() {
     const panel = document.getElementById('insightsPanel');
     document.getElementById('panelTitle').textContent = '💬 AI-Generated Talking Points';
-    
-    const customer = getMockCustomer(currentCustomer);
-    const years = calculateYearsSince(customer.join_date);
-    
-    let html = `
-        <h3>Conversation Guide</h3>
-        
-        <div class="info-card">
-            <h4>Opening</h4>
-            <p>"Hello ${customer.name.split(' ')[0]}! It's great to connect with you today."</p>
-        </div>
-        
-        <div class="info-card">
-            <h4>Relationship Highlights</h4>
-            <ul>
-                <li>You've been with us for ${years} years - thank you for your loyalty!</li>
-                ${customer.type === 'Premium' ? '<li>As a Premium customer, you have access to our best rates and exclusive benefits</li>' : ''}
-                <li>Your satisfaction score of ${customer.satisfaction_score}/5.0 shows we're meeting your needs</li>
-            </ul>
-        </div>
-        
-        <div class="info-card">
-            <h4>Key Facts</h4>
-            <ul>
-                <li>Total policies: ${customer.policies.length}</li>
-                <li>Customer type: ${customer.type}</li>
-                <li>Satisfaction score: ${customer.satisfaction_score}/5.0</li>
-                <li>Claims filed: None (excellent history!)</li>
-            </ul>
-        </div>
-        
-        <div class="info-card">
-            <h4>Conversation Starters</h4>
-            <ul>
-                <li>"I noticed you might benefit from bundling opportunities that could save you money"</li>
-                <li>"Have you thought about enhancing your coverage to better protect your assets?"</li>
-                <li>"We have some new products that align perfectly with your current policies"</li>
-            </ul>
-        </div>
-        
-        <div class="info-card">
-            <h4>Closing</h4>
-            <p>"Is there anything else I can help you with today? I'm here to ensure you have the best coverage for your needs."</p>
-        </div>
-    `;
-    
-    document.getElementById('panelContent').innerHTML = html;
+    document.getElementById('panelContent').innerHTML = '<div class="loading">Generating talking points...</div>';
     panel.classList.add('open');
+    
+    try {
+        const response = await fetch(`${API_BASE}/api/customers/${encodeURIComponent(currentCustomer)}/talking-points?context=general`);
+        
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        
+        const data = await response.json();
+        let html = '<h3>Conversation Guide';
+        if (data.ai_generated) html += ' <span class="ai-badge">🤖 AI Generated</span>';
+        html += '</h3>';
+        
+        const tp = data.talking_points || data;
+        
+        // Greeting
+        if (tp.greeting) {
+            html += `<div class="info-card"><h4>👋 Greeting</h4><p>${tp.greeting}</p></div>`;
+        }
+        
+        // Relationship highlights
+        if (tp.relationship_highlights && tp.relationship_highlights.length > 0) {
+            html += `<div class="info-card"><h4>🤝 Relationship Highlights</h4><ul>`;
+            tp.relationship_highlights.forEach(h => { html += `<li>${h}</li>`; });
+            html += `</ul></div>`;
+        }
+        
+        // Conversation starters
+        if (tp.conversation_starters && tp.conversation_starters.length > 0) {
+            html += `<div class="info-card"><h4>💬 Conversation Starters</h4><ul>`;
+            tp.conversation_starters.forEach(s => { html += `<li>${s}</li>`; });
+            html += `</ul></div>`;
+        }
+        
+        // Key facts
+        if (tp.key_facts && tp.key_facts.length > 0) {
+            html += `<div class="info-card"><h4>📋 Key Facts</h4><ul>`;
+            tp.key_facts.forEach(f => { html += `<li>${f}</li>`; });
+            html += `</ul></div>`;
+        }
+        
+        // Objection handlers (AI-generated)
+        if (tp.objection_handlers && tp.objection_handlers.length > 0) {
+            html += `<div class="info-card"><h4>🛡️ Objection Handlers</h4><ul>`;
+            tp.objection_handlers.forEach(o => { html += `<li>${o}</li>`; });
+            html += `</ul></div>`;
+        }
+        
+        // Closing
+        if (tp.closing) {
+            html += `<div class="info-card"><h4>✅ Closing</h4><p>${tp.closing}</p></div>`;
+        }
+        
+        // Fallback for any other keys we haven't explicitly handled
+        const handled = new Set(['greeting', 'relationship_highlights', 'conversation_starters', 'key_facts', 'objection_handlers', 'closing']);
+        for (const [key, value] of Object.entries(tp)) {
+            if (handled.has(key) || key === 'customer_id' || key === 'retrieved_at' || key === 'generated_at' || key === 'ai_generated' || key === 'context' || key === 'talking_points') continue;
+            html += `<div class="info-card"><h4>${formatLabel(key)}</h4>`;
+            if (Array.isArray(value)) {
+                html += '<ul>' + value.map(v => `<li>${typeof v === 'object' ? JSON.stringify(v) : v}</li>`).join('') + '</ul>';
+            } else if (typeof value === 'string') {
+                html += formatAIText(value);
+            } else if (typeof value === 'object' && value !== null) {
+                html += formatAIText(value);
+            } else {
+                html += `<p>${value}</p>`;
+            }
+            html += '</div>';
+        }
+        
+        document.getElementById('panelContent').innerHTML = html;
+    } catch (error) {
+        console.error('Error loading talking points:', error);
+        document.getElementById('panelContent').innerHTML = '<p style="color: red;">Error loading talking points.</p>';
+    }
 }
 
 // Close panel
@@ -497,7 +752,8 @@ function showTab(tabName, event) {
 
 // Load recommendations tab
 function loadRecommendationsTab() {
-    const customer = getMockCustomer(currentCustomer);
+    const customer = currentCustomerData;
+    if (!customer) return;
     
     let html = '<h3>AI-Powered Recommendations</h3>';
     html += '<p style="margin-bottom: 20px; color: #666;">One-click access to cross-sell and up-sell opportunities</p>';
@@ -508,19 +764,29 @@ function loadRecommendationsTab() {
     html += '</div>';
     
     html += '<h4>Summary</h4>';
-    html += `<p>✅ ${customer.policies.length > 1 ? '3 cross-sell opportunities identified' : '5 cross-sell opportunities identified'}</p>`;
-    html += '<p>✅ 2 up-sell opportunities available</p>';
-    html += '<p>✅ Total potential revenue: $3,730/year</p>';
+    const policyCount = (customer.policies || []).length;
+    html += `<p>✅ ${policyCount} active policies</p>`;
+    html += `<p>✅ Total Premium: $${(customer.lifetime_value || 0).toLocaleString()}</p>`;
+    html += `<p>✅ ${(customer.claim_history || []).length} claims on file</p>`;
     
     document.getElementById('recommendationsList').innerHTML = html;
 }
 
 // Load insights tab
 function loadInsightsTab() {
-    const customer = getMockCustomer(currentCustomer);
+    const customer = currentCustomerData;
+    if (!customer) return;
     
     let html = '<h3>Customer Intelligence</h3>';
     html += '<p style="margin-bottom: 20px; color: #666;">Real-time insights and trend analysis</p>';
+    
+    // Show AI summary if available
+    if (customer.ai_summary) {
+        html += `<div class="info-card" style="border-left: 4px solid #667eea; margin-bottom: 20px;">
+            <h4>🤖 AI Customer Summary</h4>
+            <p style="line-height: 1.6;">${customer.ai_summary}</p>
+        </div>`;
+    }
     
     html += '<div class="quick-actions" style="margin-bottom: 30px;">';
     html += '<button onclick="showInsights()" class="btn btn-warning">View All Insights</button>';
@@ -529,15 +795,15 @@ function loadInsightsTab() {
     
     html += '<h4>Quick Insights</h4>';
     html += `<div class="insight-card">
-        <strong>Retention Score:</strong> 92/100 - Low churn risk
+        <strong>Customer Type:</strong> ${customer.type} — ${customer.income_band || 'N/A'} income
     </div>`;
     
     html += `<div class="insight-card">
-        <strong>Customer Health:</strong> Excellent - Active engagement, high satisfaction
+        <strong>Risk Score:</strong> ${customer.risk_score != null ? (customer.risk_score * 100).toFixed(0) + '%' : 'N/A'}
     </div>`;
     
     html += `<div class="insight-card">
-        <strong>Upsell Readiness:</strong> 78% - Good time to present enhancements
+        <strong>Satisfaction:</strong> ${customer.satisfaction_score || 'N/A'}/5.0
     </div>`;
     
     document.getElementById('insightsList').innerHTML = html;
@@ -577,7 +843,6 @@ async function fetchHazardRisk(hazardType, zipCode) {
         return await response.json();
     } catch (error) {
         console.error(`Error fetching ${hazardType} risk:`, error);
-        // Return mock data for demo
         return {
             hazard_type: hazardType,
             zip: zipCode,
@@ -622,4 +887,30 @@ function displayHazardRisk(hazardType, data) {
     } else {
         driversElem.innerHTML = '<small>No significant risk factors identified</small>';
     }
+}
+
+// Helper: render a generic data object as a recommendation card
+function renderGenericRecommendation(data) {
+    let html = '<div class="recommendation-card">';
+    for (const [key, value] of Object.entries(data)) {
+        if (key === 'customer_id' || key === 'retrieved_at') continue;
+        if (Array.isArray(value)) {
+            html += `<p><strong>${formatLabel(key)}:</strong></p><ul>${value.map(v => `<li>${typeof v === 'object' ? JSON.stringify(v) : v}</li>`).join('')}</ul>`;
+        } else if (typeof value === 'object' && value !== null) {
+            html += `<p><strong>${formatLabel(key)}:</strong></p><pre style="white-space:pre-wrap;">${JSON.stringify(value, null, 2)}</pre>`;
+        } else {
+            html += `<p><strong>${formatLabel(key)}:</strong> ${value}</p>`;
+        }
+    }
+    html += '</div>';
+    return html;
+}
+
+// Helper: format a snake_case or camelCase label to Title Case
+function formatLabel(key) {
+    return key
+        .replace(/_/g, ' ')
+        .replace(/([A-Z])/g, ' $1')
+        .replace(/^\w/, c => c.toUpperCase())
+        .trim();
 }

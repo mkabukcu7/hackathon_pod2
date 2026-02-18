@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Insurance Agent Dashboard - Multi-Agent System</title>
-    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="stylesheet" href="/static/css/styles.css?v=3">
 </head>
 <body>
     <div class="container">
@@ -24,17 +24,17 @@
             <div class="stat-card">
                 <div class="stat-icon">📊</div>
                 <div class="stat-value" id="activeOpportunities">-</div>
-                <div class="stat-label">Active Opportunities</div>
+                <div class="stat-label">Active Policies</div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon">💡</div>
+                <div class="stat-icon">📋</div>
                 <div class="stat-value" id="aiInsights">-</div>
-                <div class="stat-label">AI Insights Today</div>
+                <div class="stat-label">Total Claims</div>
             </div>
             <div class="stat-card">
-                <div class="stat-icon">🎯</div>
+                <div class="stat-icon">💰</div>
                 <div class="stat-value" id="retentionScore">-</div>
-                <div class="stat-label">Avg Retention Score</div>
+                <div class="stat-label">Avg Premium</div>
             </div>
         </div>
 
@@ -45,7 +45,7 @@
                 <input 
                     type="text" 
                     id="customerSearch" 
-                    placeholder="Search by name, email, phone, or customer ID..." 
+                    placeholder="Search by customer ID, state, region, or income band..." 
                     class="search-input"
                 >
                 <button onclick="searchCustomer()" class="btn btn-primary">Search</button>
@@ -97,6 +97,12 @@
                     </div>
                 </div>
                 
+                <!-- Current Weather -->
+                <div class="weather-section" id="weatherSection" style="display: none;">
+                    <h3>🌤️ Current Weather at Customer Location</h3>
+                    <div id="weatherContent">Loading weather...</div>
+                </div>
+
                 <!-- Hazard Risk Assessment -->
                 <div class="hazard-risk-section" id="hazardRiskSection" style="display: none;">
                     <h3>🌍 Hazard Risk Assessment</h3>
@@ -165,6 +171,6 @@
         </div>
     </div>
 
-    <script src="/static/js/dashboard.js"></script>
+    <script src="/static/js/dashboard.js?v=3"></script>
 </body>
 </html>

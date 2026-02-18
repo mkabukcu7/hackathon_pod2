@@ -58,7 +58,7 @@ async def root():
     """Serve the dashboard UI"""
     index_path = os.path.join(os.path.dirname(__file__), '..', 'web', 'templates', 'index.html')
     if os.path.exists(index_path):
-        with open(index_path, 'r') as f:
+        with open(index_path, 'r', encoding='utf-8') as f:
             return f.read()
     
     # Fallback to API info
@@ -267,13 +267,24 @@ async def get_environmental_alerts(
 
 
 # Customer Agent Endpoints
+@app.get("/api/customers/stats")
+async def get_customer_stats():
+    """Get overall customer statistics"""
+    try:
+        stats = customer_agent.get_stats()
+        return stats
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/customers/search")
 async def search_customers(
-    query: str = Query(..., description="Search query")
+    query: str = Query(..., description="Search query"),
+    limit: int = Query(50, ge=1, le=200, description="Max results")
 ):
     """Search for customers"""
     try:
-        results = customer_agent.search_customer(query)
+        results = customer_agent.search_customer(query, limit=limit)
         return {"results": results, "count": len(results)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -454,7 +465,7 @@ async def get_security_recommendations(
 # Hazard Risk Endpoints
 @app.get("/api/risk/flood")
 async def get_flood_risk(
-    zip: str = Query(..., description="5-digit ZIP code", regex="^\\d{5}$")
+    zip: str = Query(..., description="5-digit ZIP code", pattern="^\\d{5}$")
 ):
     """Get flood risk assessment for a ZIP code
     
@@ -474,7 +485,7 @@ async def get_flood_risk(
 
 @app.get("/api/risk/wildfire")
 async def get_wildfire_risk(
-    zip: str = Query(..., description="5-digit ZIP code", regex="^\\d{5}$")
+    zip: str = Query(..., description="5-digit ZIP code", pattern="^\\d{5}$")
 ):
     """Get wildfire risk assessment for a ZIP code
     
@@ -494,7 +505,7 @@ async def get_wildfire_risk(
 
 @app.get("/api/risk/earthquake")
 async def get_earthquake_risk(
-    zip: str = Query(..., description="5-digit ZIP code", regex="^\\d{5}$")
+    zip: str = Query(..., description="5-digit ZIP code", pattern="^\\d{5}$")
 ):
     """Get earthquake risk assessment for a ZIP code
     

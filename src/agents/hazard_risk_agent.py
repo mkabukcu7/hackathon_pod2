@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils.zip_crosswalk import get_county_for_zip, get_zips_for_county
 from utils.cache import hazard_cache
 from utils.parquet_loader import get_external_signals
+from services.openai_service import chat_completion, is_available as openai_available
 
 
 class HazardRiskAgent:
@@ -255,11 +256,11 @@ class HazardRiskAgent:
         """
         try:
             # Build filter for multiple ZIPs
-            zip_filter = " OR ".join([f"reportedZipcode eq '{z}'" for z in zip_codes[:50]])  # Limit to 50 ZIPs
+            zip_filter = " or ".join([f"reportedZipCode eq '{z}'" for z in zip_codes[:50]])  # Limit to 50 ZIPs
             date_filter = f"dateOfLoss gt '{start_date.strftime('%Y-%m-%d')}'"
             state_filter = f"state eq '{state_abbr}'"
             
-            filter_str = f"({zip_filter}) AND {date_filter} AND {state_filter}"
+            filter_str = f"({zip_filter}) and {date_filter} and {state_filter}"
             
             url = f"{self.OPENFEMA_BASE}/FimaNfipClaims"
             params = {
@@ -318,10 +319,10 @@ class HazardRiskAgent:
             # Get incident types for this hazard
             incident_types = self.HAZARD_TYPES.get(hazard_type, [])
             if incident_types:
-                type_filter = " OR ".join([f"incidentType eq '{t}'" for t in incident_types])
-                filter_str = f"{date_filter} AND {state_filter} AND ({type_filter})"
+                type_filter = " or ".join([f"incidentType eq '{t}'" for t in incident_types])
+                filter_str = f"{date_filter} and {state_filter} and ({type_filter})"
             else:
-                filter_str = f"{date_filter} AND {state_filter}"
+                filter_str = f"{date_filter} and {state_filter}"
             
             url = f"{self.OPENFEMA_BASE}/DisasterDeclarationsSummaries"
             params = {
@@ -373,10 +374,10 @@ class HazardRiskAgent:
         try:
             # Build filter
             date_filter = f"declarationDate ge '{start_date.strftime('%Y-%m-%d')}'"
-            state_filter = f"state eq '{state_abbr}'"
+            state_filter = f"stateAbbreviation eq '{state_abbr}'"
             county_filter = f"county eq '{county}'"
             
-            filter_str = f"{date_filter} AND {state_filter} AND {county_filter}"
+            filter_str = f"{date_filter} and {state_filter} and {county_filter}"
             
             url = f"{self.OPENFEMA_BASE}/PublicAssistanceFundedProjectsDetails"
             params = {
@@ -470,7 +471,7 @@ class HazardRiskAgent:
         if not drivers:
             drivers.append("No significant historical incidents")
         
-        return {
+        result = {
             "hazard_type": hazard_type,
             "zip": zip_code,
             "county": county,
@@ -498,7 +499,63 @@ class HazardRiskAgent:
                 "OpenFEMA FimaNfipClaims" if hazard_type == "flood" else "OpenFEMA PublicAssistanceFundedProjectsDetails"
             ]
         }
+
+        # Enrich with AI-generated risk narrative
+        ai_narrative = self._ai_risk_narrative(result)
+        if ai_narrative:
+            result["ai_risk_narrative"] = ai_narrative
+            result["ai_generated"] = True
+        else:
+            result["ai_generated"] = False
+
+        return result
     
+    # ---- Azure OpenAI helpers ------------------------------------------------
+
+    def _ai_risk_narrative(self, risk_data: Dict[str, Any]) -> Optional[str]:
+        """Generate AI-powered plain-language risk narrative for underwriters.
+
+        Args:
+            risk_data: The complete risk assessment dictionary.
+
+        Returns:
+            Narrative string, or None if AI is unavailable.
+        """
+        if not openai_available():
+            return None
+
+        try:
+            drivers_text = "; ".join(risk_data.get("drivers", []))
+            context = (
+                f"Hazard: {risk_data.get('hazard_type')}, "
+                f"ZIP: {risk_data.get('zip')}, "
+                f"County: {risk_data.get('county')}, {risk_data.get('state')} ({risk_data.get('state_abbr')}), "
+                f"Risk score: {risk_data.get('risk_score')}/100 ({risk_data.get('band')}), "
+                f"Disaster declarations: {risk_data.get('frequency', {}).get('disaster_count', 0)} in {risk_data.get('window_years')} years, "
+                f"Financial impact: ${risk_data.get('financial', {}).get('total_amount', 0):,.0f}, "
+                f"Claims count: {risk_data.get('financial', {}).get('claim_count', 0)}, "
+                f"Drivers: {drivers_text}"
+            )
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a senior insurance underwriter specializing in "
+                        "natural disaster risk. Given FEMA-sourced hazard data, "
+                        "write a concise 2-3 sentence risk narrative suitable for "
+                        "an underwriting report. Include the risk level, key drivers, "
+                        "and a premium/coverage recommendation. Do NOT use markdown."
+                    ),
+                },
+                {"role": "user", "content": context},
+            ]
+
+            return chat_completion(messages, temperature=0.4, max_tokens=250)
+        except Exception as e:
+            print(f"AI risk narrative generation failed: {e}")
+            return None
+
     def _error_response(self, zip_code: str, error_message: str) -> Dict[str, Any]:
         """Generate error response"""
         return {

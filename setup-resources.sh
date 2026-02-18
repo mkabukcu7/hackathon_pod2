@@ -18,6 +18,7 @@ ENVIRONMENT="${ENVIRONMENT:-dev}"
 MAPS_NAME="hackathon-maps-${ENVIRONMENT}"
 OPENAI_NAME="hackathon-openai-${ENVIRONMENT}"
 KEYVAULT_NAME="hackathon-kv-${ENVIRONMENT}-$(date +%s | tail -c 5)"
+SKIP_KEYVAULT="${SKIP_KEYVAULT:-false}"
 
 # Functions
 log_info() {
@@ -75,8 +76,7 @@ create_maps() {
         az maps account create \
             --name "$MAPS_NAME" \
             --resource-group "$RESOURCE_GROUP" \
-            --sku S0 \
-            --kind Gen2
+            --sku G2
         log_info "Azure Maps created successfully"
     fi
     
@@ -142,6 +142,7 @@ deploy_model() {
             --deployment-name "$deployment" \
             --model-name "$model" \
             --model-version "$version" \
+            --model-format OpenAI \
             --sku-capacity 1 \
             --sku-name "Standard"
         log_info "Model deployed successfully"
@@ -270,9 +271,11 @@ display_summary() {
     echo "  Client ID: $CLIENT_ID"
     echo "  Tenant ID: $TENANT_ID"
     echo ""
-    echo "Key Vault:"
-    echo "  Name: $KEYVAULT_NAME"
-    echo ""
+    if [ "$SKIP_KEYVAULT" != "true" ]; then
+        echo "Key Vault:"
+        echo "  Name: $KEYVAULT_NAME"
+        echo ""
+    fi
     echo -e "${YELLOW}Generated .env file: .env.generated${NC}"
     echo -e "${YELLOW}Review and merge with your .env file${NC}"
     echo ""
@@ -287,9 +290,13 @@ main() {
     create_resource_group
     create_maps
     create_openai
-    deploy_model "gpt-35-turbo" "gpt-35-turbo" "0613"
+    deploy_model "gpt-4o-mini" "gpt-4o-mini" "2024-07-18"
     create_service_principal
-    create_keyvault
+    if [ "$SKIP_KEYVAULT" != "true" ]; then
+        create_keyvault
+    else
+        log_warn "Skipping Key Vault creation (use .env file for secrets)"
+    fi
     generate_env
     display_summary
 }

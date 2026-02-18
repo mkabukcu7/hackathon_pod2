@@ -1,9 +1,12 @@
 """
 Retention Insights Agent - Provides customer trends and retention analytics
+Powered by Azure OpenAI GPT-4o-mini for AI-generated insights with rule-based fallback.
 """
 from typing import Dict, Any, List, Optional
 from datetime import datetime, timedelta
+import json
 import random
+import logging
 import sys
 import os
 import pandas as pd
@@ -17,6 +20,9 @@ from utils.parquet_loader import (
     get_claims,
     get_customer_features
 )
+from services.openai_service import chat_completion, is_available as openai_available
+
+logger = logging.getLogger(__name__)
 
 
 class RetentionInsightsAgent:
@@ -61,21 +67,150 @@ class RetentionInsightsAgent:
         except Exception as e:
             print(f"Error loading Parquet data: {e}")
             return None
+
+    # ------------------------------------------------------------------ #
+    #  GPT-4o-mini AI enhancement helpers
+    # ------------------------------------------------------------------ #
+    def _build_customer_summary(self, customer_id: str, customer_data: Dict[str, Any]) -> str:
+        """Build a concise text summary of the customer for LLM prompts."""
+        policies = customer_data.get("policies", [])
+        claims = customer_data.get("claim_history", [])
+        policy_lines = ", ".join(
+            f"{p.get('type', 'Unknown')} (${p.get('premium', 0):,.0f})" for p in policies[:5]
+        ) or "none"
+        return (
+            f"Customer {customer_id}: "
+            f"Type={customer_data.get('type', 'Standard')}, "
+            f"State={customer_data.get('state', 'N/A')}, "
+            f"Age={customer_data.get('age', 'N/A')}, "
+            f"Satisfaction={customer_data.get('satisfaction_score', 'N/A')}/5, "
+            f"Policies=[{policy_lines}] ({len(policies)} total), "
+            f"Claims={len(claims)}, "
+            f"Lifetime Value=${customer_data.get('lifetime_value', 0):,.0f}, "
+            f"Join Date={customer_data.get('join_date', 'N/A')}, "
+            f"Last Contact={customer_data.get('last_contact', 'N/A')}"
+        )
+
+    def _ai_generate_insights(self, customer_id: str, customer_data: Dict[str, Any]) -> Optional[List[Dict]]:
+        """Use GPT-4o-mini to generate customer insights."""
+        if not openai_available():
+            return None
+
+        summary = self._build_customer_summary(customer_id, customer_data)
+        messages = [
+            {"role": "system", "content": (
+                "You are an expert insurance analytics AI. Analyze the customer profile and "
+                "return a JSON array of insight objects. Each object must have: "
+                '"category" (satisfaction|claims|engagement|renewal|value), '
+                '"type" (positive|alert|info|opportunity|urgent), '
+                '"icon" (single emoji), '
+                '"title" (short title), '
+                '"description" (1-2 sentence insight), '
+                '"action" (recommended next step). '
+                "Return 3-6 insights. Return ONLY the JSON array, no markdown."
+            )},
+            {"role": "user", "content": summary},
+        ]
+        raw = chat_completion(messages, temperature=0.5, max_tokens=800,
+                              response_format={"type": "json_object"})
+        if raw is None:
+            return None
+        try:
+            parsed = json.loads(raw)
+            # Handle both {"insights": [...]} and bare [...]
+            if isinstance(parsed, list):
+                return parsed
+            if isinstance(parsed, dict) and "insights" in parsed:
+                return parsed["insights"]
+            return None
+        except (json.JSONDecodeError, KeyError):
+            logger.warning("AI insights returned invalid JSON")
+            return None
+
+    def _ai_generate_trends(self, customer_id: str, customer_data: Dict[str, Any]) -> Optional[Dict]:
+        """Use GPT-4o-mini to generate trend analysis and predictions."""
+        if not openai_available():
+            return None
+
+        summary = self._build_customer_summary(customer_id, customer_data)
+        messages = [
+            {"role": "system", "content": (
+                "You are an expert insurance analytics AI. Analyze the customer profile and "
+                "return a JSON object with: "
+                '"trends" (object with engagement_trend, premium_trend, satisfaction_trend, risk_trend — '
+                "each value is one of: improving, stable, declining), "
+                '"key_observations" (array of 3-4 specific observation strings), '
+                '"predictions" (object with retention_probability 0-1, upsell_readiness 0-1, churn_risk 0-1). '
+                "Be specific and data-driven. Return ONLY JSON, no markdown."
+            )},
+            {"role": "user", "content": summary},
+        ]
+        raw = chat_completion(messages, temperature=0.4, max_tokens=600,
+                              response_format={"type": "json_object"})
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("AI trends returned invalid JSON")
+            return None
+
+    def _ai_generate_retention_recommendations(self, score: int, factors: List[Dict],
+                                                customer_data: Dict[str, Any]) -> Optional[List[str]]:
+        """Use GPT-4o-mini to generate retention recommendations."""
+        if not openai_available():
+            return None
+
+        factors_text = "; ".join(
+            f"{f['factor']} (impact: {f['impact']})" for f in factors
+        )
+        messages = [
+            {"role": "system", "content": (
+                "You are an insurance retention specialist AI. Given a customer's retention score "
+                "and contributing factors, generate 3-5 specific, actionable retention recommendations. "
+                "Return a JSON object with a single key \"recommendations\" containing an array of strings."
+            )},
+            {"role": "user", "content": (
+                f"Retention score: {score}/100, Risk level: "
+                f"{'High' if score < 60 else 'Medium' if score < 80 else 'Low'}. "
+                f"Factors: {factors_text}. "
+                f"Customer type: {customer_data.get('type', 'Standard')}, "
+                f"Policies: {len(customer_data.get('policies', []))}"
+            )},
+        ]
+        raw = chat_completion(messages, temperature=0.5, max_tokens=400,
+                              response_format={"type": "json_object"})
+        if raw is None:
+            return None
+        try:
+            parsed = json.loads(raw)
+            return parsed.get("recommendations", [])
+        except (json.JSONDecodeError, KeyError):
+            return None
         
     def get_customer_insights(
         self,
         customer_id: str,
         customer_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Get real-time insights about a customer
-        
-        Args:
-            customer_id: Customer ID
-            customer_data: Customer profile data
-            
-        Returns:
-            Dictionary containing customer insights
+        """Get AI-powered insights about a customer.
+
+        Uses GPT-4o-mini when available, falls back to rule-based logic.
         """
+        # --- Try AI-generated insights first ---
+        ai_insights = self._ai_generate_insights(customer_id, customer_data)
+        if ai_insights:
+            return {
+                "customer_id": customer_id,
+                "customer_name": customer_data.get("name"),
+                "insight_count": len(ai_insights),
+                "insights": ai_insights,
+                "overall_health": self._calculate_health_score(customer_data),
+                "ai_generated": True,
+                "generated_at": datetime.now().isoformat()
+            }
+
+        # --- Rule-based fallback ---
         insights = []
         
         # Analyze satisfaction
@@ -143,18 +278,24 @@ class RetentionInsightsAgent:
             
         # Analyze renewal timing
         for policy in policies:
-            renewal_date = datetime.fromisoformat(policy["renewal_date"])
-            days_to_renewal = (renewal_date - datetime.now()).days
-            
-            if days_to_renewal <= 30:
-                insights.append({
-                    "category": "renewal",
-                    "type": "urgent",
-                    "icon": "🔔",
-                    "title": f"{policy['type']} Renewal Due Soon",
-                    "description": f"Renews in {days_to_renewal} days - Time to engage",
-                    "action": "Proactive renewal call with retention offers"
-                })
+            renewal_date_str = policy.get("renewal_date")
+            if not renewal_date_str:
+                continue
+            try:
+                renewal_date = datetime.fromisoformat(renewal_date_str)
+                days_to_renewal = (renewal_date - datetime.now()).days
+                
+                if days_to_renewal <= 30:
+                    insights.append({
+                        "category": "renewal",
+                        "type": "urgent",
+                        "icon": "🔔",
+                        "title": f"{policy.get('type', 'Policy')} Renewal Due Soon",
+                        "description": f"Renews in {days_to_renewal} days - Time to engage",
+                        "action": "Proactive renewal call with retention offers"
+                    })
+            except (ValueError, TypeError):
+                continue
                 
         # Customer lifetime value insight
         ltv = customer_data.get("lifetime_value", 0)
@@ -174,6 +315,7 @@ class RetentionInsightsAgent:
             "insight_count": len(insights),
             "insights": insights,
             "overall_health": self._calculate_health_score(customer_data),
+            "ai_generated": False,
             "generated_at": datetime.now().isoformat()
         }
         
@@ -182,15 +324,35 @@ class RetentionInsightsAgent:
         customer_id: str,
         customer_data: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Analyze customer trends over time
-        
-        Args:
-            customer_id: Customer ID
-            customer_data: Customer profile data
-            
-        Returns:
-            Dictionary containing trend analysis
+        """Analyze customer trends over time.
+
+        Uses GPT-4o-mini when available, falls back to rule-based logic.
         """
+        # --- Try AI-generated trends first ---
+        ai_trends = self._ai_generate_trends(customer_id, customer_data)
+        if ai_trends:
+            # Build monthly_data for chart rendering (still computed locally)
+            monthly_data = []
+            for i in range(12, 0, -1):
+                date = datetime.now() - timedelta(days=30*i)
+                monthly_data.append({
+                    "month": date.strftime("%Y-%m"),
+                    "premium_paid": customer_data.get("policies", [{}])[0].get("premium", 0) / 12,
+                    "contacts": random.randint(0, 3),
+                    "satisfaction": min(5.0, customer_data.get("satisfaction_score", 4.0) + random.uniform(-0.3, 0.3))
+                })
+            return {
+                "customer_id": customer_id,
+                "customer_name": customer_data.get("name"),
+                "trends": ai_trends.get("trends", {}),
+                "monthly_data": monthly_data,
+                "key_observations": ai_trends.get("key_observations", []),
+                "predictions": ai_trends.get("predictions", {}),
+                "ai_generated": True,
+                "generated_at": datetime.now().isoformat()
+            }
+
+        # --- Rule-based fallback ---
         trends = {
             "engagement_trend": "stable",
             "premium_trend": "increasing",
@@ -224,6 +386,7 @@ class RetentionInsightsAgent:
                 "upsell_readiness": 0.78,
                 "churn_risk": 0.08
             },
+            "ai_generated": False,
             "generated_at": datetime.now().isoformat()
         }
         
@@ -294,6 +457,10 @@ class RetentionInsightsAgent:
             
         # Normalize score
         score = max(0, min(100, score))
+
+        # Try AI-generated recommendations, fall back to rule-based
+        ai_recs = self._ai_generate_retention_recommendations(score, factors, customer_data)
+        recommendations = ai_recs if ai_recs else self._get_retention_recommendations(score, factors)
         
         return {
             "customer_id": customer_id,
@@ -301,7 +468,8 @@ class RetentionInsightsAgent:
             "retention_score": score,
             "risk_level": "Low" if score >= 80 else "Medium" if score >= 60 else "High",
             "factors": factors,
-            "recommendations": self._get_retention_recommendations(score, factors),
+            "recommendations": recommendations,
+            "ai_generated": ai_recs is not None,
             "generated_at": datetime.now().isoformat()
         }
         

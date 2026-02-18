@@ -5,6 +5,11 @@ import os
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+
+from services.openai_service import chat_completion, is_available as openai_available
+
 
 class AzureAgent:
     """Agent for Azure service integration"""
@@ -177,7 +182,7 @@ class AzureAgent:
             Dictionary containing cost analysis data
         """
         # Mock implementation - replace with actual Azure Cost Management API call
-        return {
+        result = {
             "scope": resource_group or "subscription",
             "time_period": time_period,
             "total_cost": 1245.67,
@@ -196,6 +201,16 @@ class AzureAgent:
             },
             "timestamp": datetime.now().isoformat()
         }
+
+        # Enrich with AI cost optimization analysis
+        ai_analysis = self._ai_cloud_analysis(result, "cost")
+        if ai_analysis:
+            result["ai_cost_analysis"] = ai_analysis
+            result["ai_generated"] = True
+        else:
+            result["ai_generated"] = False
+
+        return result
         
     def get_service_health(self) -> Dict[str, Any]:
         """Get Azure service health status
@@ -240,7 +255,7 @@ class AzureAgent:
             Dictionary containing security recommendations
         """
         # Mock implementation - replace with actual Azure Security Center API call
-        return {
+        result = {
             "scope": resource_group or "subscription",
             "security_score": 78,
             "recommendations": [
@@ -265,3 +280,71 @@ class AzureAgent:
             ],
             "timestamp": datetime.now().isoformat()
         }
+
+        # Enrich with AI security analysis
+        ai_analysis = self._ai_cloud_analysis(result, "security")
+        if ai_analysis:
+            result["ai_security_analysis"] = ai_analysis
+            result["ai_generated"] = True
+        else:
+            result["ai_generated"] = False
+
+        return result
+
+    # ---- Azure OpenAI helpers ------------------------------------------------
+
+    def _ai_cloud_analysis(self, data: Dict[str, Any], analysis_type: str) -> Optional[str]:
+        """Generate AI-powered cloud infrastructure analysis.
+
+        Args:
+            data: The resource/cost/security data dictionary.
+            analysis_type: 'cost' or 'security'.
+
+        Returns:
+            Analysis string, or None if AI is unavailable.
+        """
+        if not openai_available():
+            return None
+
+        try:
+            if analysis_type == "cost":
+                cost_breakdown = ", ".join(
+                    f"{k}: ${v:,.2f}" for k, v in data.get("cost_by_service", {}).items()
+                )
+                context = (
+                    f"Scope: {data.get('scope')}, Period: {data.get('time_period')}, "
+                    f"Total cost: ${data.get('total_cost', 0):,.2f} {data.get('currency', 'USD')}, "
+                    f"Cost trend: {data.get('cost_trend')}, "
+                    f"Breakdown: {cost_breakdown}, "
+                    f"Next month forecast: ${data.get('forecast', {}).get('next_month', 0):,.2f}"
+                )
+                system_msg = (
+                    "You are an Azure FinOps advisor. Given cloud cost data, "
+                    "provide a concise 2-3 sentence cost optimization analysis. "
+                    "Identify the top cost driver and suggest one specific "
+                    "cost-saving action. Do NOT use markdown."
+                )
+            else:
+                recs = "; ".join(
+                    f"{r['severity']}: {r['title']} ({r['affected_resources']} resources)"
+                    for r in data.get("recommendations", [])
+                )
+                context = (
+                    f"Security score: {data.get('security_score')}/100, "
+                    f"Recommendations: {recs}"
+                )
+                system_msg = (
+                    "You are an Azure security advisor. Given security posture data, "
+                    "provide a concise 2-3 sentence assessment with the most "
+                    "critical action to take first. Do NOT use markdown."
+                )
+
+            messages = [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": context},
+            ]
+
+            return chat_completion(messages, temperature=0.4, max_tokens=200)
+        except Exception as e:
+            print(f"AI cloud analysis failed: {e}")
+            return None

@@ -10,6 +10,29 @@ from functools import lru_cache
 # Cache for loaded Parquet files
 _parquet_cache: Dict[str, pd.DataFrame] = {}
 
+# Correct US state → region mapping (US Census Bureau regions)
+_STATE_TO_REGION: Dict[str, str] = {
+    # Northeast
+    'CT': 'Northeast', 'ME': 'Northeast', 'MA': 'Northeast', 'NH': 'Northeast',
+    'NJ': 'Northeast', 'NY': 'Northeast', 'PA': 'Northeast', 'RI': 'Northeast',
+    'VT': 'Northeast',
+    # Midwest
+    'IL': 'Midwest', 'IN': 'Midwest', 'IA': 'Midwest', 'KS': 'Midwest',
+    'MI': 'Midwest', 'MN': 'Midwest', 'MO': 'Midwest', 'NE': 'Midwest',
+    'ND': 'Midwest', 'OH': 'Midwest', 'SD': 'Midwest', 'WI': 'Midwest',
+    # Southeast
+    'AL': 'Southeast', 'AR': 'Southeast', 'DE': 'Southeast', 'FL': 'Southeast',
+    'GA': 'Southeast', 'KY': 'Southeast', 'LA': 'Southeast', 'MD': 'Southeast',
+    'MS': 'Southeast', 'NC': 'Southeast', 'SC': 'Southeast', 'TN': 'Southeast',
+    'VA': 'Southeast', 'WV': 'Southeast', 'DC': 'Southeast',
+    # Southwest
+    'AZ': 'Southwest', 'NM': 'Southwest', 'OK': 'Southwest', 'TX': 'Southwest',
+    # West
+    'AK': 'West', 'CA': 'West', 'CO': 'West', 'HI': 'West', 'ID': 'West',
+    'MT': 'West', 'NV': 'West', 'OR': 'West', 'UT': 'West', 'WA': 'West',
+    'WY': 'West',
+}
+
 
 def _get_data_path(filename: str) -> str:
     """Get the absolute path to a data file in the data folder"""
@@ -55,8 +78,19 @@ def load_parquet(filename: str, use_cache: bool = True) -> pd.DataFrame:
 
 
 def get_customers() -> pd.DataFrame:
-    """Load customer data from bronze_customers_raw.parquet"""
-    return load_parquet('bronze_customers_raw.parquet')
+    """Load customer data from bronze_customers_raw.parquet.
+    
+    Corrects the Region column to match each customer's State
+    using standard US Census Bureau region definitions.
+    """
+    df = load_parquet('bronze_customers_raw.parquet')
+    # Fix region based on state (source data has random region assignment)
+    if 'State' in df.columns and 'Region' in df.columns:
+        df = df.copy()
+        df['Region'] = df['State'].map(_STATE_TO_REGION).fillna(df['Region'])
+        # Update the cache with the corrected data
+        _parquet_cache['bronze_customers_raw.parquet'] = df
+    return df
 
 
 def get_policies() -> pd.DataFrame:
