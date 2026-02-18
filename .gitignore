@@ -43,10 +43,13 @@ Thumbs.db
 # Logs
 *.log
 
-# Test coverage
+# Test coverage and results
 htmlcov/
 .coverage
 .pytest_cache/
+test_results.txt
+TEST_RESULTS.md
+*_test_output.txt
 
 # Data files - Users should provide their own or point to Azure Lakehouse
 # Do not commit data files to version control
