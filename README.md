@@ -6,17 +6,19 @@ A comprehensive multi-agent application built for hackathon_pod2 (Strategic Insu
 
 This multi-agent application is inspired by the TechWorkshop-L300-AI-Apps-and-agents repository and provides:
 
-- **Weather Agent**: Real-time weather data, forecasts, and air quality information
-- **Environmental Agent**: Pollution levels, climate data, ecosystem health, and water quality metrics
+- **Weather Agent**: Real-time weather data, forecasts, air quality, and hazard risk assessment using Azure Maps and OpenFEMA
+- **Environmental Agent**: Pollution levels, climate data, ecosystem health, and water quality metrics via Azure Maps
 - **Azure Agent**: Azure resource management, cost analysis, service health, and security recommendations
 - **Agent Orchestrator**: Intelligent routing and coordination of multiple agents
+- **Hazard Risk Agent**: Flood, wildfire, and earthquake risk scoring using FEMA disaster data
 
 ## Features
 
-- 🌤️ **Weather Data**: Current conditions, forecasts, and air quality from OpenWeatherMap
-- 🌍 **Environmental Monitoring**: Pollution, climate trends, ecosystem health, and water quality
-- ☁️ **Azure Integration**: Resource management, cost tracking, and security insights
-- 🌊 **Hazard Risk Assessment**: Flood, wildfire, and earthquake risk scoring using OpenFEMA data
+- 🌤️ **Weather Data**: Current conditions, forecasts, and air quality from Azure Maps Weather API
+- 🌍 **Environmental Monitoring**: Pollution levels, climate trends via Azure Maps Environmental APIs
+- ☁️ **Azure Integration**: Resource management, cost tracking, and security insights via Azure SDK
+- 🌊 **Hazard Risk Assessment**: Flood, wildfire, and earthquake risk scoring using OpenFEMA disaster data and claims
+- 📊 **Parquet Data Support**: 261K+ records from customer profiles, policies, claims, and environmental signals
 - 🤖 **Multi-Agent Orchestration**: Natural language query processing with intelligent agent routing
 - 🌐 **REST API**: FastAPI-based web service with comprehensive endpoints
 - 💻 **CLI Interface**: Interactive command-line interface for easy access
@@ -73,9 +75,11 @@ cp .env.example .env
 
 Edit the `.env` file with your credentials:
 
-- **OpenWeatherMap API**: Get a free API key from [OpenWeatherMap](https://openweathermap.org/api)
-- **Azure Credentials**: Set up Azure service principal credentials
-- **Environmental API**: Configure if using a specific environmental data service
+- **Azure Maps API Key**: Get from [Azure Portal](https://portal.azure.com/) > Azure Maps resource > Authentication > Primary Key
+  - Provides weather, air quality, and environmental data
+  - No separate credentials needed for OpenFEMA (public API)
+- **Azure Credentials**: Set up Azure service principal credentials (subscription ID, tenant ID, client ID, client secret)
+- **Azure OpenAI**: Configure for agent orchestration (endpoint and API key)
 
 ## Usage
 
@@ -149,17 +153,20 @@ python examples.py
 
 ## Agent Capabilities
 
-### Weather Agent
-- `get_current_weather(location, units)` - Current weather conditions
-- `get_forecast(location, days, units)` - Weather forecast
-- `get_air_quality(lat, lon)` - Air quality index and components
+### Weather Agent (Azure Maps + OpenFEMA)
+- `get_current_weather(location, units)` - Current weather conditions via Azure Maps
+- `get_forecast(location, days, units)` - 5-day weather forecast via Azure Maps
+- `get_air_quality(lat, lon)` - Air quality index and pollutant components (PM2.5, PM10, NO2, O3, SO2, CO) via Azure Maps
+- `get_flood_risk_assessment()` - Flood risk scoring using FEMA disaster declarations and NFIP claims
+- `get_wildfire_risk_assessment()` - Wildfire risk scoring using FEMA disaster declarations and public assistance
+- `get_earthquake_risk_assessment()` - Earthquake risk scoring using FEMA disaster declarations and public assistance
 
-### Environmental Agent
-- `get_pollution_data(location)` - Pollution levels and metrics
-- `get_climate_data(region, timeframe)` - Climate trends and data
-- `get_ecosystem_health(ecosystem_type, location)` - Ecosystem metrics
-- `get_water_quality(water_body, location)` - Water quality parameters
-- `get_environmental_alerts(location, alert_types)` - Environmental alerts
+### Environmental Agent (Azure Maps)
+- `get_pollution_data(location)` - Air quality index and pollutant metrics via Azure Maps
+- `get_climate_data(region, timeframe)` - Current conditions and 5-day forecasts via Azure Maps
+- `get_ecosystem_health(ecosystem_type, location)` - Ecosystem health metrics (mock implementation)
+- `get_water_quality(water_body, location)` - Water quality parameters (mock implementation)
+- `get_environmental_alerts(location, alert_types)` - Environmental alerts based on conditions (mock implementation)
 
 ### Azure Agent
 - `get_resource_groups()` - List Azure resource groups
@@ -169,31 +176,32 @@ python examples.py
 - `get_service_health()` - Azure service health status
 - `get_security_recommendations(resource_group)` - Security recommendations
 
-### Hazard Risk Agent
+### Hazard Risk Agent (OpenFEMA Integration)
 - `get_flood_risk(zip_code)` - Flood risk assessment using OpenFEMA NFIP claims and disaster declarations
 - `get_wildfire_risk(zip_code)` - Wildfire risk assessment using OpenFEMA disaster data and public assistance
 - `get_earthquake_risk(zip_code)` - Earthquake risk assessment using OpenFEMA disaster data and public assistance
 
 #### Hazard Risk Scoring
-The Hazard Risk Agent computes risk scores (0-100) based on:
-- **10-year historical window**: Analyzes data from the past decade
+The Hazard Risk Agent and Weather Agent compute risk scores (0-100) based on:
+- **10-year historical window**: Analyzes data from the past decade (configurable)
 - **50/50 frequency + financial blend**: 
   - Frequency score: Number of disaster declarations
-  - Financial score: Total claims/assistance amounts
+  - Financial score: Total claims/assistance amounts from FEMA data
 - **Risk Bands**: Low (0-25), Moderate (25-50), High (50-75), Severe (75-100)
 - **County-level aggregation**: Uses ZIP-to-county crosswalk for accurate geographic mapping
 - **Caching**: Results cached for 24 hours to optimize performance
 
-**Data Sources:**
-- OpenFEMA DisasterDeclarationsSummaries
-- OpenFEMA FimaNfipClaims (for flood)
-- OpenFEMA PublicAssistanceFundedProjectsDetails (for wildfire/earthquake)
+**Data Sources (No API Key Required):**
+- OpenFEMA DisasterDeclarationsSummaries (https://www.fema.gov/api/open/v2)
+- OpenFEMA FimaNfipClaims (for flood risk analysis)
+- OpenFEMA PublicAssistanceFundedProjectsDetails (for wildfire/earthquake analysis)
 
 **Example API usage:**
 ```bash
 curl "http://localhost:8000/api/risk/flood?zip=90001"
 curl "http://localhost:8000/api/risk/wildfire?zip=94102"
 curl "http://localhost:8000/api/risk/earthquake?zip=94102"
+curl "http://localhost:8000/api/weather/flood-risk?location=Los%20Angeles,%20CA"
 ```
 
 ## Development
@@ -259,9 +267,29 @@ Contributions are welcome! Please follow these guidelines:
 
 For issues and questions, please open an issue in the GitHub repository.
 
+## Data Sources
+
+### Parquet Data
+The system includes 261,946+ records across 7 Parquet files (~5.5 MB):
+- Customer profiles and demographics
+- Insurance policies and coverage details
+- Claims history and amounts
+- Environmental signals and indicators
+- Risk signals and assessments
+- Producer information
+- Activity logs and interactions
+
+**Location:** `data/` directory (excluded from version control)
+
+### External APIs
+- **Azure Maps**: Weather, air quality, environmental data, and geocoding
+- **OpenFEMA v2**: Federal disaster declarations, NFIP claims, and public assistance data
+- **Azure OpenAI**: Agent orchestration and natural language processing
+
 ## Acknowledgments
 
 - Inspired by Microsoft's TechWorkshop-L300-AI-Apps-and-agents
 - Built for Strategic Insurance Pod 2 Hackathon
-- Weather data provided by OpenWeatherMap
+- Weather and environmental data provided by Azure Maps
+- Disaster and risk data provided by OpenFEMA (public API)
 - Azure integration powered by Azure SDK
