@@ -48,9 +48,9 @@ if os.path.exists(web_dir):
 # Initialize orchestrator and agents
 orchestrator = AgentOrchestrator()
 customer_agent = CustomerProfileAgent(use_cosmos_db=True)
-sales_agent = SalesIntelligenceAgent()
-retention_agent = RetentionInsightsAgent()
-hazard_agent = HazardRiskAgent()
+sales_agent = SalesIntelligenceAgent(use_cosmos_db=True)
+retention_agent = RetentionInsightsAgent(use_cosmos_db=True)
+hazard_agent = HazardRiskAgent(use_cosmos_db=True)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -298,7 +298,11 @@ async def get_customer(customer_id: str):
         if "error" in customer:
             raise HTTPException(status_code=404, detail=customer["error"])
         return customer
+    except HTTPException:
+        raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 

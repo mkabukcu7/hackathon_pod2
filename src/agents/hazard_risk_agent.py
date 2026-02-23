@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils.zip_crosswalk import get_county_for_zip, get_zips_for_county
 from utils.cache import hazard_cache
 from utils.parquet_loader import get_external_signals
+from services.cosmos_db_service import CosmosDBService
 from services.openai_service import chat_completion, is_available as openai_available
 
 
@@ -31,26 +32,43 @@ class HazardRiskAgent:
         "earthquake": ["Earthquake"]
     }
     
-    def __init__(self, window_years: int = 10, timeout: int = 30, use_parquet: bool = True):
+    def __init__(self, window_years: int = 10, timeout: int = 30,
+                 use_parquet: bool = True, use_cosmos_db: bool = True):
         """
         Initialize the Hazard Risk Agent
         
         Args:
             window_years: Number of years to look back for risk calculation
             timeout: HTTP timeout in seconds
-            use_parquet: Whether to use Parquet data for external signals (True) or mock data (False)
+            use_parquet: Whether to use Parquet data as fallback for external signals
+            use_cosmos_db: Whether to try Cosmos DB first (default True)
         """
         self.window_years = window_years
         self.timeout = timeout
         self.use_parquet = use_parquet
+        self.use_cosmos_db = use_cosmos_db
+        self.cosmos_service = None
         self.external_signals_df = None
         self.client = httpx.Client(timeout=timeout)
         
-        # Try to load Parquet data
+        # Try Cosmos DB first (primary data source)
+        if use_cosmos_db:
+            try:
+                self.cosmos_service = CosmosDBService()
+                if self.cosmos_service.is_connected():
+                    print("Hazard Risk Agent connected to Cosmos DB (primary)")
+                else:
+                    print("Cosmos DB not available for Hazard Agent, falling back to Parquet")
+                    self.use_cosmos_db = False
+            except Exception as e:
+                print(f"Hazard Agent Cosmos DB connection failed: {e}, falling back to Parquet")
+                self.use_cosmos_db = False
+        
+        # Load Parquet data as fallback
         if use_parquet:
             try:
                 self.external_signals_df = get_external_signals()
-                print("Hazard Risk Agent loaded Parquet external signals data")
+                print("Hazard Risk Agent loaded Parquet external signals data (fallback)")
             except Exception as e:
                 print(f"Failed to load external signals Parquet data: {e}")
                 self.use_parquet = False
