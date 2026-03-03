@@ -19,7 +19,7 @@ from utils.parquet_loader import (
     get_policies,
     get_producer_activity
 )
-from services.cosmos_db_service import CosmosDBService
+from services.data_layer_client import DataLayerClient
 from services.openai_service import chat_completion, is_available as openai_available
 
 logger = logging.getLogger(__name__)
@@ -28,30 +28,30 @@ logger = logging.getLogger(__name__)
 class SalesIntelligenceAgent:
     """Agent for generating sales recommendations and insights from Cosmos DB / Parquet data"""
     
-    def __init__(self, use_parquet: bool = True, use_cosmos_db: bool = True):
+    def __init__(self, use_parquet: bool = True, use_data_layer: bool = True):
         """Initialize the Sales Intelligence Agent
         
         Args:
             use_parquet: Whether to use Parquet data as fallback
-            use_cosmos_db: Whether to try Cosmos DB first (default True)
+            use_data_layer: Whether to try Data Layer API first (default True)
         """
         self.product_catalog = self._load_product_catalog()
         self.use_parquet = use_parquet
-        self.use_cosmos_db = use_cosmos_db
+        self.use_cosmos_db = use_data_layer
         self.cosmos_service = None
         self.parquet_data = None
         
-        # Try Cosmos DB first (primary data source)
-        if use_cosmos_db:
+        # Try Data Layer API first (primary data source)
+        if use_data_layer:
             try:
-                self.cosmos_service = CosmosDBService()
+                self.cosmos_service = DataLayerClient()
                 if self.cosmos_service.is_connected():
-                    print("Sales Intelligence Agent connected to Cosmos DB (primary)")
+                    print("Sales Intelligence Agent connected to Data Layer API (primary)")
                 else:
-                    print("Cosmos DB not available for Sales Agent, falling back to Parquet")
+                    print("Data Layer API not available for Sales Agent, falling back to Parquet")
                     self.use_cosmos_db = False
             except Exception as e:
-                print(f"Sales Agent Cosmos DB connection failed: {e}, falling back to Parquet")
+                print(f"Sales Agent Data Layer API connection failed: {e}, falling back to Parquet")
                 self.use_cosmos_db = False
         
         # Load Parquet data as fallback

@@ -4,8 +4,10 @@ Provides REST API endpoints for the multi-agent system and web dashboard
 """
 import os
 import sys
+from datetime import datetime, timezone
+from uuid import uuid4
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel, Field
@@ -19,6 +21,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
 
 from orchestrator import AgentOrchestrator
 from agents import WeatherAgent, EnvironmentalAgent, AzureAgent, CustomerProfileAgent, SalesIntelligenceAgent, RetentionInsightsAgent, HazardRiskAgent
+from services.data_layer_client import DataLayerClient
 
 
 # Pydantic models for request/response
@@ -47,10 +50,103 @@ if os.path.exists(web_dir):
 
 # Initialize orchestrator and agents
 orchestrator = AgentOrchestrator()
-customer_agent = CustomerProfileAgent(use_cosmos_db=True)
-sales_agent = SalesIntelligenceAgent(use_cosmos_db=True)
-retention_agent = RetentionInsightsAgent(use_cosmos_db=True)
+customer_agent = CustomerProfileAgent(use_data_layer=True)
+sales_agent = SalesIntelligenceAgent(use_data_layer=True)
+retention_agent = RetentionInsightsAgent(use_data_layer=True)
 hazard_agent = HazardRiskAgent(use_cosmos_db=True)
+
+
+def _build_logic_apps_customer_packet(customer_id: str) -> Dict[str, Any]:
+    """Build deterministic customer packet for Logic Apps workflows."""
+    request_id = str(uuid4())
+    packet: Dict[str, Any] = {
+        "request_id": request_id,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "customer_id": customer_id,
+        "status": "success",
+        "data": {},
+        "errors": [],
+    }
+
+    profile = customer_agent.get_customer_profile(customer_id)
+    if "error" in profile:
+        packet["status"] = "failed"
+        packet["errors"].append({"component": "customer_profile", "message": profile.get("error")})
+        return packet
+
+    packet["data"]["profile"] = profile
+
+    try:
+        packet["data"]["customer_insights"] = retention_agent.get_customer_insights(customer_id, profile)
+    except Exception as e:
+        packet["errors"].append({"component": "customer_insights", "message": str(e)})
+
+    try:
+        packet["data"]["retention_score"] = retention_agent.get_retention_score(customer_id, profile)
+    except Exception as e:
+        packet["errors"].append({"component": "retention_score", "message": str(e)})
+
+    try:
+        packet["data"]["cross_sell"] = sales_agent.get_cross_sell_recommendations(customer_id, profile)
+    except Exception as e:
+        packet["errors"].append({"component": "cross_sell", "message": str(e)})
+
+    zip_code = profile.get("zip")
+    if isinstance(zip_code, str) and len(zip_code) == 5:
+        try:
+            packet["data"]["flood_risk"] = hazard_agent.get_flood_risk(zip_code)
+        except Exception as e:
+            packet["errors"].append({"component": "flood_risk", "message": str(e)})
+
+    if packet["errors"]:
+        packet["status"] = "partial_success"
+
+    packet["meta"] = {
+        "errors_count": len(packet["errors"]),
+        "components_returned": sorted(list(packet["data"].keys())),
+    }
+    return packet
+
+
+def _get_logic_apps_platform_health() -> Dict[str, Any]:
+    """Collect workflow-facing readiness signals."""
+    data_layer_connected = False
+    data_layer_error = None
+    try:
+        client = DataLayerClient()
+        data_layer_connected = client.is_connected()
+    except Exception as e:
+        data_layer_error = str(e)
+
+    return {
+        "status": "healthy" if data_layer_connected else "degraded",
+        "components": {
+            "api": {"ready": True},
+            "data_layer": {
+                "ready": data_layer_connected,
+                "base_url_set": bool(os.getenv("DATA_LAYER_URL")),
+                "error": data_layer_error,
+            },
+            "agents": {
+                "customer": True,
+                "sales": True,
+                "retention": True,
+                "hazard": True,
+            },
+        },
+    }
+
+
+def _validate_workflow_key(x_workflow_key: Optional[str]) -> None:
+    """Validate optional shared key for workflow endpoints.
+
+    If WORKFLOW_SHARED_KEY is not configured, auth is treated as open for local/dev.
+    """
+    expected_key = os.getenv("WORKFLOW_SHARED_KEY")
+    if not expected_key:
+        return
+    if x_workflow_key != expected_key:
+        raise HTTPException(status_code=401, detail="Unauthorized workflow request")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -86,11 +182,18 @@ async def api_info():
             "query": "/api/query",
             "report": "/api/report",
             "customers": "/api/customers/*",
+            "workflows": "/api/workflows/*",
+            "workflow_platform_health": "/api/workflows/platform-health",
+            "workflow_customer_packet": "/api/workflows/customer-packet/{customer_id}",
             "weather": "/api/weather/*",
             "environmental": "/api/environmental/*",
             "azure": "/api/azure/*",
             "capabilities": "/api/capabilities"
-        }
+        },
+        "workflow_auth": {
+            "header": "x-workflow-key",
+            "required_when_env_set": "WORKFLOW_SHARED_KEY"
+        },
     }
 
 
@@ -98,6 +201,26 @@ async def api_info():
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+
+@app.get("/api/workflows/platform-health")
+async def workflow_platform_health(x_workflow_key: Optional[str] = Header(default=None, alias="x-workflow-key")):
+    """Logic Apps readiness probe for API + data layer + required agents."""
+    _validate_workflow_key(x_workflow_key)
+    return _get_logic_apps_platform_health()
+
+
+@app.get("/api/workflows/customer-packet/{customer_id}")
+async def workflow_customer_packet(
+    customer_id: str,
+    x_workflow_key: Optional[str] = Header(default=None, alias="x-workflow-key"),
+):
+    """Workflow-ready deterministic payload for Logic Apps orchestration."""
+    try:
+        _validate_workflow_key(x_workflow_key)
+        return _build_logic_apps_customer_packet(customer_id)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/query")

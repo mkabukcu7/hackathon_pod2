@@ -11,7 +11,7 @@ import pandas as pd
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from services.cosmos_db_service import CosmosDBService
+from services.data_layer_client import DataLayerClient
 from services.openai_service import chat_completion, is_available as openai_available
 from utils.parquet_loader import (
     get_customers,
@@ -133,30 +133,30 @@ MOCK_CUSTOMERS = {
 class CustomerProfileAgent:
     """Agent for customer profile management and lookup with Cosmos DB, Parquet, or mock data backends"""
     
-    def __init__(self, use_parquet: bool = True, use_cosmos_db: bool = True):
+    def __init__(self, use_parquet: bool = True, use_data_layer: bool = True):
         """Initialize the Customer Profile Agent
         
         Args:
             use_parquet: Whether to use Parquet data as fallback
-            use_cosmos_db: Whether to try Cosmos DB first (default True)
+            use_data_layer: Whether to try Data Layer API first (default True)
         """
         self.customers = MOCK_CUSTOMERS
         self.use_parquet = use_parquet
-        self.use_cosmos_db = use_cosmos_db
+        self.use_cosmos_db = use_data_layer
         self.cosmos_service = None
         self.parquet_data = None
         
-        # Try Cosmos DB first (primary data source)
-        if use_cosmos_db:
+        # Try Data Layer API first (primary data source)
+        if use_data_layer:
             try:
-                self.cosmos_service = CosmosDBService()
+                self.cosmos_service = DataLayerClient()
                 if self.cosmos_service.is_connected():
-                    print("Customer Profile Agent connected to Cosmos DB (primary)")
+                    print("Customer Profile Agent connected to Data Layer API (primary)")
                 else:
-                    print("Cosmos DB not available, falling back to Parquet")
+                    print("Data Layer API not available, falling back to Parquet")
                     self.use_cosmos_db = False
             except Exception as e:
-                print(f"Failed to connect to Cosmos DB: {e}, falling back to Parquet")
+                print(f"Failed to connect to Data Layer API: {e}, falling back to Parquet")
                 self.use_cosmos_db = False
         
         # Load Parquet data as fallback

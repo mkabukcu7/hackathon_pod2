@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from utils.zip_crosswalk import get_county_for_zip, get_zips_for_county
 from utils.cache import hazard_cache
 from utils.parquet_loader import get_external_signals
-from services.cosmos_db_service import CosmosDBService
+from services.data_layer_client import DataLayerClient
 from services.openai_service import chat_completion, is_available as openai_available
 
 
@@ -51,17 +51,17 @@ class HazardRiskAgent:
         self.external_signals_df = None
         self.client = httpx.Client(timeout=timeout)
         
-        # Try Cosmos DB first (primary data source)
+        # Try Data Layer API first (primary data source)
         if use_cosmos_db:
             try:
-                self.cosmos_service = CosmosDBService()
+                self.cosmos_service = DataLayerClient()
                 if self.cosmos_service.is_connected():
-                    print("Hazard Risk Agent connected to Cosmos DB (primary)")
+                    print("Hazard Risk Agent connected to Data Layer API (primary)")
                 else:
-                    print("Cosmos DB not available for Hazard Agent, falling back to Parquet")
+                    print("Data Layer API not available for Hazard Agent, falling back to Parquet")
                     self.use_cosmos_db = False
             except Exception as e:
-                print(f"Hazard Agent Cosmos DB connection failed: {e}, falling back to Parquet")
+                print(f"Hazard Agent Data Layer API connection failed: {e}, falling back to Parquet")
                 self.use_cosmos_db = False
         
         # Load Parquet data as fallback
