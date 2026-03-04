@@ -12,8 +12,6 @@ import os
 import sys
 import json
 import logging
-from datetime import datetime, timezone
-from uuid import uuid4
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -25,6 +23,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from fastmcp import FastMCP
 from services.data_layer_client import DataLayerClient
+from workflows.logic_apps import build_logic_apps_customer_packet, build_logic_apps_platform_health
 
 from agents import (
     CustomerProfileAgent,
@@ -73,93 +72,43 @@ def _get_agent(name: str):
 
 def _get_platform_health() -> dict:
     """Collect runtime health/readiness signals for MCP clients."""
-    data_layer_connected = False
-    data_layer_error = None
-    try:
-        client = DataLayerClient()
-        data_layer_connected = client.is_connected()
-    except Exception as e:
-        data_layer_error = str(e)
-
-    return {
-        "status": "healthy" if data_layer_connected else "degraded",
-        "components": {
-            "mcp_server": {
-                "ready": True,
-                "server": "Insurance Intelligence Platform",
-            },
+    return build_logic_apps_platform_health(
+        component_name="mcp_server",
+        component_payload={
+            "ready": True,
+            "server": "Insurance Intelligence Platform",
+        },
+        agents_payload={
+            "initialized": sorted(list(_agents.keys())),
+            "count": len(_agents),
+        },
+        data_layer_client_factory=DataLayerClient,
+        extra_components={
             "data_layer": {
-                "ready": data_layer_connected,
                 "base_url_set": bool(os.getenv("DATA_LAYER_URL")),
-                "error": data_layer_error,
-            },
-            "agents": {
-                "initialized": sorted(list(_agents.keys())),
-                "count": len(_agents),
             },
             "env": {
                 "azure_openai_endpoint_set": bool(os.getenv("AZURE_OPENAI_ENDPOINT")),
                 "azure_maps_api_key_set": bool(os.getenv("AZURE_MAPS_API_KEY")),
             },
         },
-    }
+    )
 
 
 def _build_logic_apps_customer_packet(customer_id: str) -> dict:
     """Build a deterministic payload for workflow systems like Logic Apps."""
-    request_id = str(uuid4())
-    packet = {
-        "request_id": request_id,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
-        "customer_id": customer_id,
-        "status": "success",
-        "data": {},
-        "errors": [],
-    }
-
     customer_agent = _get_agent("customer")
     sales_agent = _get_agent("sales")
     retention_agent = _get_agent("retention")
     hazard_agent = _get_agent("hazard")
 
-    profile = customer_agent.get_customer_profile(customer_id)
-    if "error" in profile:
-        packet["status"] = "failed"
-        packet["errors"].append({"component": "customer_profile", "message": profile.get("error")})
-        return packet
-
-    packet["data"]["profile"] = profile
-
-    try:
-        packet["data"]["customer_insights"] = retention_agent.get_customer_insights(customer_id, profile)
-    except Exception as e:
-        packet["errors"].append({"component": "customer_insights", "message": str(e)})
-
-    try:
-        packet["data"]["retention_score"] = retention_agent.get_retention_score(customer_id, profile)
-    except Exception as e:
-        packet["errors"].append({"component": "retention_score", "message": str(e)})
-
-    try:
-        packet["data"]["cross_sell"] = sales_agent.get_cross_sell_recommendations(customer_id, profile)
-    except Exception as e:
-        packet["errors"].append({"component": "cross_sell", "message": str(e)})
-
-    zip_code = profile.get("zip")
-    if isinstance(zip_code, str) and len(zip_code) == 5:
-        try:
-            packet["data"]["flood_risk"] = hazard_agent.get_flood_risk(zip_code)
-        except Exception as e:
-            packet["errors"].append({"component": "flood_risk", "message": str(e)})
-
-    if packet["errors"]:
-        packet["status"] = "partial_success"
-
-    packet["meta"] = {
-        "errors_count": len(packet["errors"]),
-        "components_returned": sorted(list(packet["data"].keys())),
-    }
-    return packet
+    return build_logic_apps_customer_packet(
+        customer_id=customer_id,
+        customer_agent=customer_agent,
+        retention_agent=retention_agent,
+        sales_agent=sales_agent,
+        hazard_agent=hazard_agent,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════

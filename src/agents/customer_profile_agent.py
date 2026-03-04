@@ -142,22 +142,27 @@ class CustomerProfileAgent:
         """
         self.customers = MOCK_CUSTOMERS
         self.use_parquet = use_parquet
-        self.use_cosmos_db = use_data_layer
-        self.cosmos_service = None
+        self.use_data_layer = use_data_layer
+        self.data_layer_client = None
+        self.use_cosmos_db = self.use_data_layer
+        self.cosmos_service = self.data_layer_client
         self.parquet_data = None
         
         # Try Data Layer API first (primary data source)
         if use_data_layer:
             try:
-                self.cosmos_service = DataLayerClient()
-                if self.cosmos_service.is_connected():
+                self.data_layer_client = DataLayerClient()
+                self.cosmos_service = self.data_layer_client
+                if self.data_layer_client.is_connected():
                     print("Customer Profile Agent connected to Data Layer API (primary)")
                 else:
                     print("Data Layer API not available, falling back to Parquet")
-                    self.use_cosmos_db = False
+                    self.use_data_layer = False
+                    self.use_cosmos_db = self.use_data_layer
             except Exception as e:
                 print(f"Failed to connect to Data Layer API: {e}, falling back to Parquet")
-                self.use_cosmos_db = False
+                self.use_data_layer = False
+                self.use_cosmos_db = self.use_data_layer
         
         # Load Parquet data as fallback
         if use_parquet:
@@ -203,14 +208,14 @@ class CustomerProfileAgent:
         Returns:
             List of matching customer summaries
         """
-        # Try Cosmos DB first (primary)
-        if self.use_cosmos_db and self.cosmos_service:
+        # Try Data Layer API first (primary)
+        if self.use_data_layer and self.data_layer_client:
             try:
-                cosmos_results = self.cosmos_service.search_customers_flexible(query, limit)
-                if cosmos_results:
-                    return self._format_cosmos_search_results(cosmos_results)
+                data_layer_results = self.data_layer_client.search_customers_flexible(query, limit)
+                if data_layer_results:
+                    return self._format_data_layer_search_results(data_layer_results)
             except Exception as e:
-                print(f"Cosmos DB search failed: {e}, falling back to Parquet")
+                print(f"Data layer search failed: {e}, falling back to Parquet")
 
         # Try Parquet data as fallback
         if self.use_parquet and self.parquet_data:
@@ -232,22 +237,14 @@ class CustomerProfileAgent:
                 
         return results
 
-    def _format_cosmos_search_results(self, cosmos_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Format Cosmos DB customer documents into search result summaries."""
+    def _format_data_layer_search_results(self, customer_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Format data-layer customer documents into search result summaries."""
         results = []
-        # Fetch policy counts for matched customers
-        customer_ids = [doc.get("CustomerId", "") for doc in cosmos_docs]
-        policy_counts = {}
-        premium_totals = {}
-        if self.cosmos_service:
-            for cid in customer_ids:
-                policies = self.cosmos_service.get_customer_policies(cid)
-                policy_counts[cid] = len(policies)
-                premium_totals[cid] = sum(float(p.get("Premium", 0)) for p in policies)
-
-        for doc in cosmos_docs:
+        for doc in customer_docs:
             cid = doc.get("CustomerId", doc.get("id", ""))
             income = doc.get("IncomeBand", "Medium")
+            policy_count = doc.get("policy_count", doc.get("PolicyCount", 0))
+            total_premium = doc.get("total_premium", doc.get("TotalPremium", 0))
             results.append({
                 "id": cid,
                 "name": f"Customer {cid}",
@@ -257,10 +254,14 @@ class CustomerProfileAgent:
                 "state": doc.get("State", ""),
                 "region": doc.get("Region", ""),
                 "zip": str(doc.get("ZipCode", "")),
-                "policy_count": policy_counts.get(cid, 0),
-                "lifetime_value": round(premium_totals.get(cid, 0), 2),
+                "policy_count": int(policy_count or 0),
+                "lifetime_value": round(float(total_premium or 0), 2),
             })
         return results
+
+    def _format_cosmos_search_results(self, cosmos_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Backward-compatible alias for older call sites."""
+        return self._format_data_layer_search_results(cosmos_docs)
 
     def _search_parquet(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
         """Search Parquet customer data
@@ -327,14 +328,14 @@ class CustomerProfileAgent:
         Returns:
             Complete customer profile with all details
         """
-        # Try Cosmos DB first (primary)
-        if self.use_cosmos_db and self.cosmos_service:
+        # Try Data Layer API first (primary)
+        if self.use_data_layer and self.data_layer_client:
             try:
-                profile = self._get_cosmos_profile(customer_id)
+                profile = self._get_data_layer_profile(customer_id)
                 if profile:
                     return profile
             except Exception as e:
-                print(f"Cosmos DB profile lookup failed: {e}, falling back to Parquet")
+                print(f"Data layer profile lookup failed: {e}, falling back to Parquet")
 
         # Try Parquet data as fallback
         if self.use_parquet and self.parquet_data:
@@ -357,22 +358,22 @@ class CustomerProfileAgent:
             "data_source": "mock_data"
         }
 
-    def _get_cosmos_profile(self, customer_id: str) -> Optional[Dict[str, Any]]:
-        """Build a full customer profile from Cosmos DB data."""
+    def _get_data_layer_profile(self, customer_id: str) -> Optional[Dict[str, Any]]:
+        """Build a full customer profile from Data Layer API data."""
         import traceback as _tb
         try:
-            customer_doc = self.cosmos_service.get_customer(customer_id)
+            customer_doc = self.data_layer_client.get_customer(customer_id)
         except Exception as e:
-            print(f"ERROR in _get_cosmos_profile get_customer: {e}")
+            print(f"ERROR in _get_data_layer_profile get_customer: {e}")
             _tb.print_exc()
             raise
         if not customer_doc:
             return None
 
         # Fetch related data from all containers
-        policies_docs = self.cosmos_service.get_customer_policies(customer_id)
-        claims_docs = self.cosmos_service.get_customer_claims(customer_id)
-        features_doc = self.cosmos_service.get_customer_features(customer_id)
+        policies_docs = self.data_layer_client.get_customer_policies(customer_id)
+        claims_docs = self.data_layer_client.get_customer_claims(customer_id)
+        features_doc = self.data_layer_client.get_customer_features(customer_id)
 
         # Build policies list
         policies = []
@@ -426,7 +427,7 @@ class CustomerProfileAgent:
             "risk_score": round(len(claim_history) / max(len(policies), 1) * 0.5, 2),
             "satisfaction_score": round(4.0 + random.uniform(0, 1), 1),
             "retrieved_at": datetime.now().isoformat(),
-            "data_source": "cosmos_db",
+            "data_source": "data_layer_api",
         }
 
         # Add ML features if available
@@ -445,6 +446,10 @@ class CustomerProfileAgent:
             profile["ai_generated"] = False
 
         return profile
+
+    def _get_cosmos_profile(self, customer_id: str) -> Optional[Dict[str, Any]]:
+        """Backward-compatible alias for older call sites."""
+        return self._get_data_layer_profile(customer_id)
 
     def _get_parquet_profile(self, customer_id: str) -> Optional[Dict[str, Any]]:
         """Build a full customer profile from Parquet data"""
@@ -589,10 +594,10 @@ class CustomerProfileAgent:
         Returns:
             Dictionary containing policy information
         """
-        # Try Cosmos DB first
-        if self.use_cosmos_db and self.cosmos_service:
+        # Try Data Layer API first
+        if self.use_data_layer and self.data_layer_client:
             try:
-                policies_docs = self.cosmos_service.get_customer_policies(customer_id)
+                policies_docs = self.data_layer_client.get_customer_policies(customer_id)
                 if policies_docs:
                     policies = []
                     for p in policies_docs:
@@ -614,7 +619,7 @@ class CustomerProfileAgent:
                         "retrieved_at": datetime.now().isoformat(),
                     }
             except Exception as e:
-                print(f"Cosmos DB policies lookup failed: {e}, falling back")
+                print(f"Data layer policies lookup failed: {e}, falling back")
 
         # Try Parquet data as fallback
         if self.use_parquet and self.parquet_data:
@@ -667,10 +672,10 @@ class CustomerProfileAgent:
         Returns:
             Dictionary containing claim history
         """
-        # Try Cosmos DB first
-        if self.use_cosmos_db and self.cosmos_service:
+        # Try Data Layer API first
+        if self.use_data_layer and self.data_layer_client:
             try:
-                claims_docs = self.cosmos_service.get_customer_claims(customer_id)
+                claims_docs = self.data_layer_client.get_customer_claims(customer_id)
                 if claims_docs:
                     claim_history = []
                     for cl in claims_docs:
@@ -690,7 +695,7 @@ class CustomerProfileAgent:
                         "retrieved_at": datetime.now().isoformat(),
                     }
             except Exception as e:
-                print(f"Cosmos DB claims lookup failed: {e}, falling back")
+                print(f"Data layer claims lookup failed: {e}, falling back")
 
         # Try Parquet data
         if self.use_parquet and self.parquet_data:
@@ -812,22 +817,22 @@ class CustomerProfileAgent:
         Returns:
             Dictionary with total customers, policies, claims counts
         """
-        # Try Cosmos DB first
-        if self.use_cosmos_db and self.cosmos_service:
+        # Try Data Layer API first
+        if self.use_data_layer and self.data_layer_client:
             try:
                 return {
-                    "total_customers": self.cosmos_service.get_customer_count(),
-                    "total_policies": self.cosmos_service.get_policy_count(),
-                    "active_policies": self.cosmos_service.get_active_policy_count(),
-                    "total_claims": self.cosmos_service.get_claim_count(),
-                    "total_premium": round(self.cosmos_service.get_total_premium(), 2),
-                    "avg_premium": round(self.cosmos_service.get_avg_premium(), 2),
-                    "states": self.cosmos_service.get_distinct_states(),
-                    "regions": self.cosmos_service.get_distinct_regions(),
-                    "data_source": "cosmos_db",
+                    "total_customers": self.data_layer_client.get_customer_count(),
+                    "total_policies": self.data_layer_client.get_policy_count(),
+                    "active_policies": self.data_layer_client.get_active_policy_count(),
+                    "total_claims": self.data_layer_client.get_claim_count(),
+                    "total_premium": round(self.data_layer_client.get_total_premium(), 2),
+                    "avg_premium": round(self.data_layer_client.get_avg_premium(), 2),
+                    "states": self.data_layer_client.get_distinct_states(),
+                    "regions": self.data_layer_client.get_distinct_regions(),
+                    "data_source": "data_layer_api",
                 }
             except Exception as e:
-                print(f"Cosmos DB stats failed: {e}, falling back to Parquet")
+                print(f"Data layer stats failed: {e}, falling back to Parquet")
 
         if self.use_parquet and self.parquet_data:
             customers_df = self.parquet_data['customers_df']

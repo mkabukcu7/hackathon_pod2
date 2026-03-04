@@ -54,6 +54,7 @@ class CosmosDBRepository:
             from azure.identity import ClientSecretCredential, DefaultAzureCredential
 
             credential = None
+            cosmos_scope = "https://cosmos.azure.com/.default"
 
             # Priority 1: Service principal
             tenant_id = os.getenv("AZURE_TENANT_ID")
@@ -61,19 +62,30 @@ class CosmosDBRepository:
             client_secret = os.getenv("AZURE_CLIENT_SECRET")
 
             if all([tenant_id, client_id, client_secret]):
-                credential = ClientSecretCredential(tenant_id, client_id, client_secret)
-                logger.info("Cosmos DB auth: service principal")
-            else:
+                try:
+                    service_principal_credential = ClientSecretCredential(tenant_id, client_id, client_secret)
+                    service_principal_credential.get_token(cosmos_scope)
+                    credential = service_principal_credential
+                    logger.info("Cosmos DB auth: service principal")
+                except Exception as e:
+                    logger.warning(f"Cosmos DB service principal auth failed: {e}")
+
+            if credential is None:
                 # Priority 2: Managed identity / az login
                 try:
-                    credential = DefaultAzureCredential()
+                    default_credential = DefaultAzureCredential()
+                    default_credential.get_token(cosmos_scope)
+                    credential = default_credential
                     logger.info("Cosmos DB auth: DefaultAzureCredential")
-                except Exception:
-                    # Priority 3: Key-based
-                    key = os.getenv("COSMOS_DB_KEY")
-                    if key:
-                        self.client = CosmosClient(self.endpoint, key)
-                        logger.info("Cosmos DB auth: key-based")
+                except Exception as e:
+                    logger.warning(f"Cosmos DB DefaultAzureCredential auth failed: {e}")
+
+            if credential is None:
+                # Priority 3: Key-based
+                key = os.getenv("COSMOS_DB_KEY")
+                if key:
+                    self.client = CosmosClient(self.endpoint, key)
+                    logger.info("Cosmos DB auth: key-based")
 
             if credential and not self.client:
                 self.client = CosmosClient(self.endpoint, credential=credential)
@@ -143,21 +155,23 @@ class CosmosDBRepository:
 
         # Exact customer ID
         if q_upper.startswith("C") and q_upper[1:].isdigit():
-            return self.query_container(
+            results = self.query_container(
                 "customers",
                 "SELECT * FROM c WHERE c.CustomerId = @q",
                 [{"name": "@q", "value": q_upper}],
                 max_items=limit,
             )
+            return self._attach_customer_policy_aggregates(results)
 
         # 5-digit ZIP
         if q_upper.isdigit() and len(q_upper) == 5:
-            return self.query_container(
+            results = self.query_container(
                 "customers",
                 "SELECT * FROM c WHERE c.ZipCode = @q",
                 [{"name": "@q", "value": q_upper}],
                 max_items=limit,
             )
+            return self._attach_customer_policy_aggregates(results)
 
         # Free-text
         sql = (
@@ -169,9 +183,30 @@ class CosmosDBRepository:
             "CONTAINS(LOWER(c.MaritalStatus), @q) OR "
             "CONTAINS(c.ZipCode, @q)"
         )
-        return self.query_container(
+        results = self.query_container(
             "customers", sql, [{"name": "@q", "value": q_lower}], max_items=limit
         )
+        return self._attach_customer_policy_aggregates(results)
+
+    def _attach_customer_policy_aggregates(self, customer_docs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Attach policy_count and total_premium to customer search documents."""
+        if not customer_docs:
+            return customer_docs
+
+        enriched_docs: List[Dict[str, Any]] = []
+        for doc in customer_docs:
+            customer_id = doc.get("CustomerId")
+            if not customer_id:
+                enriched_docs.append(doc)
+                continue
+
+            policies = self.get_customer_policies(customer_id)
+            enriched_doc = dict(doc)
+            enriched_doc["policy_count"] = len(policies)
+            enriched_doc["total_premium"] = float(sum(float(policy.get("Premium", 0) or 0) for policy in policies))
+            enriched_docs.append(enriched_doc)
+
+        return enriched_docs
 
     # ── Related entities ─────────────────────────────────────────────
 

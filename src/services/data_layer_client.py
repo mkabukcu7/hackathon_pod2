@@ -41,6 +41,7 @@ class DataLayerClient:
         self.api_key = api_key or os.getenv("DATA_LAYER_API_KEY", "")
         self.timeout = timeout
         self._client = httpx.Client(timeout=timeout)
+        self._closed = False
 
         if not self.base_url:
             logger.warning("DATA_LAYER_URL not set — DataLayerClient will not function.")
@@ -49,7 +50,7 @@ class DataLayerClient:
 
     def _get(self, path: str, params: Optional[Dict] = None) -> Optional[Any]:
         """Make a GET request to the data layer."""
-        if not self.base_url:
+        if self._closed or not self.base_url:
             return None
         url = f"{self.base_url}/api/{path.lstrip('/')}"
         headers = {}
@@ -67,6 +68,25 @@ class DataLayerClient:
         except Exception as e:
             logger.error(f"Data layer request failed: {e}")
             return None
+
+    def close(self) -> None:
+        """Close the underlying HTTP client and release resources."""
+        if self._closed:
+            return
+        self._client.close()
+        self._closed = True
+
+    def __enter__(self) -> "DataLayerClient":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     # ── Health ───────────────────────────────────────────────────────
 
