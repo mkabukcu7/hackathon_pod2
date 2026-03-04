@@ -191,8 +191,8 @@ async function loadCustomerWeather(customer) {
     const weatherSection = document.getElementById('weatherSection');
     const weatherContent = document.getElementById('weatherContent');
     
-    // Determine location from state or zip
-    const location = customer.state || customer.region;
+    // Determine location (prefer ZIP for accurate customer-local weather)
+    const location = customer.zip || customer.state || customer.region;
     if (!location) {
         weatherSection.style.display = 'none';
         return;
@@ -218,11 +218,12 @@ async function loadCustomerWeather(customer) {
         // Temperature
         const temp = data.temperature?.value ?? data.temperature ?? '--';
         const feelsLike = data.feels_like?.value ?? data.feels_like ?? '';
+        const temperatureUnit = (data.temperature_unit || data.temperature?.unit || 'F').toString().toUpperCase();
         html += `
             <div class="weather-metric">
                 <div class="metric-icon">🌡️</div>
-                <div class="metric-value">${typeof temp === 'number' ? Math.round(temp) + '°F' : temp}</div>
-                <div class="metric-label">Temperature${feelsLike ? ` (Feels ${typeof feelsLike === 'number' ? Math.round(feelsLike) + '°F' : feelsLike})` : ''}</div>
+                <div class="metric-value">${typeof temp === 'number' ? Math.round(temp) + `°${temperatureUnit}` : temp}</div>
+                <div class="metric-label">Temperature${feelsLike ? ` (Feels ${typeof feelsLike === 'number' ? Math.round(feelsLike) + `°${temperatureUnit}` : feelsLike})` : ''}</div>
             </div>
         `;
         
@@ -248,10 +249,11 @@ async function loadCustomerWeather(customer) {
         
         // Wind
         const windSpeed = data.wind?.speed?.value ?? data.wind_speed ?? data.wind?.speed ?? '--';
+        const windUnit = data.wind_unit || data.wind?.speed?.unit || 'mph';
         html += `
             <div class="weather-metric">
                 <div class="metric-icon">💨</div>
-                <div class="metric-value">${typeof windSpeed === 'number' ? Math.round(windSpeed) + ' mph' : windSpeed}</div>
+                <div class="metric-value">${typeof windSpeed === 'number' ? Math.round(windSpeed) + ' ' + windUnit : windSpeed}</div>
                 <div class="metric-label">Wind Speed</div>
             </div>
         `;

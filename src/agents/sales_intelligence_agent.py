@@ -19,32 +19,49 @@ from utils.parquet_loader import (
     get_policies,
     get_producer_activity
 )
+from services.data_layer_client import DataLayerClient
 from services.openai_service import chat_completion, is_available as openai_available
 
 logger = logging.getLogger(__name__)
 
 
 class SalesIntelligenceAgent:
-    """Agent for generating sales recommendations and insights from Parquet data"""
+    """Agent for generating sales recommendations and insights from Cosmos DB / Parquet data"""
     
-    def __init__(self, use_parquet: bool = True):
+    def __init__(self, use_parquet: bool = True, use_data_layer: bool = True):
         """Initialize the Sales Intelligence Agent
         
         Args:
-            use_parquet: Whether to use Parquet data (True) or mock data (False)
+            use_parquet: Whether to use Parquet data as fallback
+            use_data_layer: Whether to try Data Layer API first (default True)
         """
         self.product_catalog = self._load_product_catalog()
         self.use_parquet = use_parquet
+        self.use_cosmos_db = use_data_layer
+        self.cosmos_service = None
         self.parquet_data = None
         
-        # Try to load Parquet data
+        # Try Data Layer API first (primary data source)
+        if use_data_layer:
+            try:
+                self.cosmos_service = DataLayerClient()
+                if self.cosmos_service.is_connected():
+                    print("Sales Intelligence Agent connected to Data Layer API (primary)")
+                else:
+                    print("Data Layer API not available for Sales Agent, falling back to Parquet")
+                    self.use_cosmos_db = False
+            except Exception as e:
+                print(f"Sales Agent Data Layer API connection failed: {e}, falling back to Parquet")
+                self.use_cosmos_db = False
+        
+        # Load Parquet data as fallback
         if use_parquet:
             try:
                 self.parquet_data = self._load_parquet_data()
                 if self.parquet_data:
-                    print("Sales Intelligence Agent loaded Parquet data")
+                    print("Sales Intelligence Agent loaded Parquet data (fallback)")
                 else:
-                    print("Parquet data not available")
+                    print("Parquet data not available for Sales Agent")
                     self.use_parquet = False
             except Exception as e:
                 print(f"Failed to load Parquet data: {e}")

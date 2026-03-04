@@ -1,0 +1,151 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2016-06-01/Microsoft.Logic.json",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "apiBaseUrl": {
+      "type": "String",
+      "defaultValue": "https://<your-api-host>"
+    },
+    "workflowSharedKey": {
+      "type": "SecureString",
+      "defaultValue": ""
+    }
+  },
+  "triggers": {
+    "manual": {
+      "type": "Request",
+      "kind": "Http",
+      "inputs": {
+        "schema": {
+          "type": "object",
+          "properties": {
+            "customer_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "customer_id"
+          ]
+        }
+      }
+    }
+  },
+  "actions": {
+    "Get_Platform_Health": {
+      "type": "Http",
+      "inputs": {
+        "method": "GET",
+        "uri": "@{concat(parameters('apiBaseUrl'), '/api/workflows/platform-health')}",
+        "headers": {
+          "x-workflow-key": "@{parameters('workflowSharedKey')}"
+        },
+        "retryPolicy": {
+          "type": "exponential",
+          "count": 4,
+          "minimumInterval": "PT5S",
+          "maximumInterval": "PT30S"
+        }
+      },
+      "runAfter": {}
+    },
+    "Check_Platform_Health": {
+      "type": "If",
+      "expression": {
+        "equals": [
+          "@{body('Get_Platform_Health')?['status']}",
+          "healthy"
+        ]
+      },
+      "actions": {
+        "Get_Customer_Packet": {
+          "type": "Http",
+          "inputs": {
+            "method": "GET",
+            "uri": "@{concat(parameters('apiBaseUrl'), '/api/workflows/customer-packet/', triggerBody()?['customer_id'])}",
+            "headers": {
+              "x-workflow-key": "@{parameters('workflowSharedKey')}"
+            },
+            "retryPolicy": {
+              "type": "exponential",
+              "count": 4,
+              "minimumInterval": "PT5S",
+              "maximumInterval": "PT30S"
+            }
+          },
+          "runAfter": {}
+        },
+        "Return_Result": {
+          "type": "Response",
+          "kind": "Http",
+          "inputs": {
+            "statusCode": 200,
+            "body": {
+              "platform_health": "@body('Get_Platform_Health')",
+              "customer_packet": "@body('Get_Customer_Packet')"
+            }
+          },
+          "runAfter": {
+            "Get_Customer_Packet": [
+              "Succeeded"
+            ]
+          }
+        },
+        "Return_Customer_Packet_Error": {
+          "type": "Response",
+          "kind": "Http",
+          "inputs": {
+            "statusCode": 502,
+            "body": {
+              "error": "Customer packet retrieval failed",
+              "platform_health": "@body('Get_Platform_Health')"
+            }
+          },
+          "runAfter": {
+            "Get_Customer_Packet": [
+              "Failed",
+              "TimedOut"
+            ]
+          }
+        }
+      },
+      "else": {
+        "actions": {
+          "Return_Degraded": {
+            "type": "Response",
+            "kind": "Http",
+            "inputs": {
+              "statusCode": 503,
+              "body": {
+                "error": "Platform health check returned non-healthy status",
+                "platform_health": "@body('Get_Platform_Health')"
+              }
+            },
+            "runAfter": {}
+          }
+        }
+      },
+      "runAfter": {
+        "Get_Platform_Health": [
+          "Succeeded"
+        ]
+      }
+    },
+    "Return_Health_Error": {
+      "type": "Response",
+      "kind": "Http",
+      "inputs": {
+        "statusCode": 502,
+        "body": {
+          "error": "Platform health check call failed"
+        }
+      },
+      "runAfter": {
+        "Get_Platform_Health": [
+          "Failed",
+          "TimedOut"
+        ]
+      }
+    }
+  },
+  "outputs": {}
+}

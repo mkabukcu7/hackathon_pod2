@@ -68,6 +68,23 @@ examples/
 └── examples.py                    # Usage examples
 ```
 
+## Workflow Integration
+
+The project includes shared workflow payload builders and dedicated tests to support Logic Apps and other orchestration clients.
+
+- **`src/workflows/logic_apps.py`**
+  - Centralizes deterministic workflow payload construction used by both API and MCP entrypoints.
+  - Prevents response-shape drift by keeping customer packet and platform health builders in one place.
+  - Improves maintainability by removing duplicated workflow assembly logic.
+
+- **`test_workflows.py`**
+  - Verifies workflow routes are present.
+  - Validates workflow auth behavior (`x-workflow-key`) including:
+    - `401` when key is configured but missing/incorrect,
+    - `503` default-deny behavior when auth is enabled but no shared key is configured,
+    - explicit bypass only when `WORKFLOW_AUTH_DISABLED=true`.
+  - Confirms authorized requests succeed for workflow endpoints.
+
 ## Installation
 
 ### Prerequisites
