@@ -41,6 +41,7 @@ class CosmosDBService:
                 from azure.identity import ClientSecretCredential, DefaultAzureCredential
                 
                 credential = None
+                cosmos_scope = "https://cosmos.azure.com/.default"
                 
                 # Priority 1: Service principal (explicit credentials)
                 tenant_id = os.getenv("AZURE_TENANT_ID")
@@ -48,19 +49,30 @@ class CosmosDBService:
                 client_secret = os.getenv("AZURE_CLIENT_SECRET")
                 
                 if all([tenant_id, client_id, client_secret]):
-                    credential = ClientSecretCredential(tenant_id, client_id, client_secret)
-                    print("Cosmos DB auth: using service principal")
-                else:
+                    try:
+                        service_principal_credential = ClientSecretCredential(tenant_id, client_id, client_secret)
+                        service_principal_credential.get_token(cosmos_scope)
+                        credential = service_principal_credential
+                        print("Cosmos DB auth: using service principal")
+                    except Exception as e:
+                        print(f"Cosmos DB service principal auth failed: {e}")
+
+                if credential is None:
                     # Priority 2: DefaultAzureCredential (az login, managed identity, etc.)
                     try:
-                        credential = DefaultAzureCredential()
+                        default_credential = DefaultAzureCredential()
+                        default_credential.get_token(cosmos_scope)
+                        credential = default_credential
                         print("Cosmos DB auth: using DefaultAzureCredential (az login / managed identity)")
-                    except Exception:
-                        # Priority 3: Key-based auth (may fail if disabled by policy)
-                        key = os.getenv("COSMOS_DB_KEY")
-                        if key:
-                            self.client = CosmosClient(self.endpoint, key)
-                            print("Cosmos DB auth: using key-based auth")
+                    except Exception as e:
+                        print(f"Cosmos DB DefaultAzureCredential auth failed: {e}")
+
+                if credential is None:
+                    # Priority 3: Key-based auth (may fail if disabled by policy)
+                    key = os.getenv("COSMOS_DB_KEY")
+                    if key:
+                        self.client = CosmosClient(self.endpoint, key)
+                        print("Cosmos DB auth: using key-based auth")
                 
                 if credential and not self.client:
                     self.client = CosmosClient(self.endpoint, credential=credential)
