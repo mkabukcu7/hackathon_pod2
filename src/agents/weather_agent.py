@@ -65,6 +65,55 @@ class WeatherAgent:
         """Cleanup HTTP client"""
         if hasattr(self, 'client'):
             self.client.close()
+
+    def _convert_temperature(self, value: Optional[float], from_unit: Optional[str], to_system: str) -> Tuple[Optional[float], Optional[str]]:
+        """Convert temperature to requested unit system.
+
+        Args:
+            value: Temperature numeric value
+            from_unit: Source unit symbol (e.g. C, F)
+            to_system: metric, imperial, or standard
+
+        Returns:
+            Tuple of (converted_value, converted_unit_symbol)
+        """
+        if value is None:
+            return None, from_unit
+
+        unit = (from_unit or "").upper()
+        target = (to_system or "metric").lower()
+
+        if target == "imperial":
+            if unit in ["C", "CELSIUS"]:
+                return round((value * 9 / 5) + 32, 1), "F"
+            return value, unit or "F"
+
+        if target in ["metric", "standard"]:
+            if unit in ["F", "FAHRENHEIT"]:
+                return round((value - 32) * 5 / 9, 1), "C"
+            return value, unit or "C"
+
+        return value, unit
+
+    def _convert_wind_speed(self, value: Optional[float], from_unit: Optional[str], to_system: str) -> Tuple[Optional[float], Optional[str]]:
+        """Convert wind speed to requested unit system (km/h <-> mph)."""
+        if value is None:
+            return None, from_unit
+
+        unit = (from_unit or "").lower()
+        target = (to_system or "metric").lower()
+
+        if target == "imperial":
+            if unit in ["km/h", "kph", "kmh"]:
+                return round(value * 0.621371, 1), "mph"
+            return value, from_unit or "mph"
+
+        if target in ["metric", "standard"]:
+            if unit in ["mph"]:
+                return round(value / 0.621371, 1), "km/h"
+            return value, from_unit or "km/h"
+
+        return value, from_unit
         
     def get_current_weather(self, location: str, units: str = "metric") -> Dict[str, Any]:
         """Get current weather for a location using Azure Maps
@@ -105,19 +154,30 @@ class WeatherAgent:
                 return {"error": "No weather data available", "source": "Azure Maps Weather API"}
             
             weather = data["results"][0]
+
+            temp_value = weather.get("temperature", {}).get("value")
+            temp_unit = weather.get("temperature", {}).get("unit")
+            feels_like_value = weather.get("realFeelTemperature", {}).get("value")
+            feels_like_unit = weather.get("realFeelTemperature", {}).get("unit") or temp_unit
+            wind_speed_value = weather.get("wind", {}).get("speed", {}).get("value")
+            wind_speed_unit = weather.get("wind", {}).get("speed", {}).get("unit")
+
+            temp_value, temp_unit = self._convert_temperature(temp_value, temp_unit, units)
+            feels_like_value, _ = self._convert_temperature(feels_like_value, feels_like_unit, units)
+            wind_speed_value, wind_speed_unit = self._convert_wind_speed(wind_speed_value, wind_speed_unit, units)
             
             result = {
                 "location": location,
                 "coordinates": {"lat": lat, "lon": lon},
-                "temperature": weather.get("temperature", {}).get("value"),
-                "temperature_unit": weather.get("temperature", {}).get("unit"),
-                "feels_like": weather.get("realFeelTemperature", {}).get("value"),
+                "temperature": temp_value,
+                "temperature_unit": temp_unit,
+                "feels_like": feels_like_value,
                 "humidity": weather.get("relativeHumidity"),
                 "pressure": weather.get("pressure", {}).get("value"),
                 "pressure_unit": weather.get("pressure", {}).get("unit"),
                 "description": weather.get("weatherText"),
-                "wind_speed": weather.get("wind", {}).get("speed", {}).get("value"),
-                "wind_unit": weather.get("wind", {}).get("speed", {}).get("unit"),
+                "wind_speed": wind_speed_value,
+                "wind_unit": wind_speed_unit,
                 "visibility": weather.get("visibility", {}).get("value"),
                 "uv_index": weather.get("uvIndex"),
                 "source": "Azure Maps Weather API",
@@ -181,15 +241,25 @@ class WeatherAgent:
             
             forecast_list = []
             for forecast in data["forecasts"][:days]:
+                min_temp = forecast.get("temperature", {}).get("minimum", {}).get("value")
+                max_temp = forecast.get("temperature", {}).get("maximum", {}).get("value")
+                temp_unit = forecast.get("temperature", {}).get("minimum", {}).get("unit")
+                min_temp, out_temp_unit = self._convert_temperature(min_temp, temp_unit, units)
+                max_temp, _ = self._convert_temperature(max_temp, temp_unit, units)
+
+                wind_speed = forecast.get("wind", {}).get("speed", {}).get("value")
+                wind_unit = forecast.get("wind", {}).get("speed", {}).get("unit")
+                wind_speed, wind_unit = self._convert_wind_speed(wind_speed, wind_unit, units)
+
                 forecast_list.append({
                     "date": forecast.get("date"),
-                    "temperature_min": forecast.get("temperature", {}).get("minimum", {}).get("value"),
-                    "temperature_max": forecast.get("temperature", {}).get("maximum", {}).get("value"),
-                    "temperature_unit": forecast.get("temperature", {}).get("minimum", {}).get("unit"),
+                    "temperature_min": min_temp,
+                    "temperature_max": max_temp,
+                    "temperature_unit": out_temp_unit,
                     "description_day": forecast.get("day", {}).get("iconPhrase"),
                     "description_night": forecast.get("night", {}).get("iconPhrase"),
-                    "wind_speed": forecast.get("wind", {}).get("speed", {}).get("value"),
-                    "wind_unit": forecast.get("wind", {}).get("speed", {}).get("unit"),
+                    "wind_speed": wind_speed,
+                    "wind_unit": wind_unit,
                     "rain_probability": forecast.get("day", {}).get("rainProbability"),
                     "snow_probability": forecast.get("day", {}).get("snowProbability")
                 })
@@ -634,12 +704,19 @@ class WeatherAgent:
         
         # Query Azure Maps Search API
         try:
+            normalized_location = location.strip() if isinstance(location, str) else location
+            is_zip = isinstance(normalized_location, str) and normalized_location.isdigit() and len(normalized_location) == 5
+
             endpoint = f"{self.AZURE_MAPS_SEARCH_BASE}/address/json"
             params = {
                 "api-version": "1.0",
-                "query": location,
+                "query": f"{normalized_location}, USA" if is_zip else normalized_location,
+                "limit": 1,
                 "subscription-key": self.api_key
             }
+
+            if is_zip:
+                params["countrySet"] = "US"
             
             response = self.client.get(endpoint, params=params)
             response.raise_for_status()

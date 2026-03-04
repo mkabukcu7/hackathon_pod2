@@ -1,0 +1,31 @@
+{
+  "platform_health": {
+    "status": "healthy|degraded",
+    "components": {
+      "api": { "ready": true },
+      "data_layer": {
+        "ready": true,
+        "base_url_set": true,
+        "error": null
+      },
+      "agents": {
+        "customer": true,
+        "sales": true,
+        "retention": true,
+        "hazard": true
+      }
+    }
+  },
+  "customer_packet": {
+    "request_id": "uuid",
+    "generated_at": "ISO-8601",
+    "customer_id": "C0000481",
+    "status": "success|partial_success|failed",
+    "data": {},
+    "errors": [],
+    "meta": {
+      "errors_count": 0,
+      "components_returned": []
+    }
+  }
+}

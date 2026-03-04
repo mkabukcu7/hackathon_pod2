@@ -2,7 +2,8 @@
 Services package initialization
 """
 
+from .data_layer_client import DataLayerClient
 from .cosmos_db_service import CosmosDBService
 from .openai_service import chat_completion, is_available as openai_available
 
-__all__ = ["CosmosDBService"]
+__all__ = ["DataLayerClient", "CosmosDBService"]
